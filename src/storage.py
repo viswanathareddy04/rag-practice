@@ -1,10 +1,11 @@
 import json
 import pickle
+import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Plus
 from sentence_transformers import SentenceTransformer
 from src.parser import DocumentChunk
 
@@ -12,7 +13,7 @@ from src.parser import DocumentChunk
 class CardIndexData:
     card_id: str
     chunks: List[DocumentChunk]
-    bm25: BM25Okapi
+    bm25: BM25Plus
     embeddings: np.ndarray
 
 class StorageManager:
@@ -39,6 +40,9 @@ class StorageManager:
                (card_dir / "bm25.pkl").exists() and \
                (card_dir / "embeddings.npy").exists()
 
+    def tokenize(self, text: str) -> List[str]:
+        return re.findall(r"\w+", text.lower())
+
     def save_card_index(self, card_id: str, chunks: List[DocumentChunk]):
         card_dir = self._get_card_dir(card_id)
         card_dir.mkdir(parents=True, exist_ok=True)
@@ -47,9 +51,9 @@ class StorageManager:
         with open(card_dir / "chunks.json", "w", encoding="utf-8") as f:
             json.dump(chunks_data, f, ensure_ascii=False, indent=2)
 
-        # Build BM25 index
-        tokenized_corpus = [c.full_text_with_context.lower().split() for c in chunks]
-        bm25 = BM25Okapi(tokenized_corpus)
+        # Build BM25Plus index with clean word tokens
+        tokenized_corpus = [self.tokenize(c.full_text_with_context) for c in chunks]
+        bm25 = BM25Plus(tokenized_corpus)
         with open(card_dir / "bm25.pkl", "wb") as f:
             pickle.dump(bm25, f)
 
