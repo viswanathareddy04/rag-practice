@@ -281,3 +281,142 @@ python scripts/query.py --card td_aeroplan_vip "What is the flight delay coverag
 ```powershell
 python scripts/eval_synthesis.py
 ```
+
+---
+
+## 7. Beginner's Guide: Core RAG Concepts Explained in Plain English
+
+If you are new to Retrieval-Augmented Generation (RAG), this section breaks down the foundational concepts and mathematics in intuitive, non-intimidating terms.
+
+### 7.1 What is RAG? (The "Open-Book Exam" Analogy)
+- **Without RAG (Standard LLM)**: Asking an AI a question about your specific TD credit card insurance is like asking a student to take an exam from memory. Even if the student is smart, they might confuse TD's policy with Scotia's or make up plausible-sounding rules (a **hallucination**).
+- **With RAG**: Before the AI speaks, our system acts like an ultra-fast research assistant that flips to the exact 3 or 4 paragraphs in your 52-page TD policy that answer the question, lays them on the AI's desk, and says: *"Answer the student's question using ONLY these paragraphs, and quote the page number."* This turns the exam into an **open-book test**, eliminating guesswork.
+
+---
+
+### 7.2 What is a "Chunk" and Why Do We Need "Breadcrumbs"?
+- **The Problem with Raw Documents**: An AI model cannot ingest a 50-page legal document with hundreds of clauses simultaneously without getting confused, slow, or exceeding token limits. We must slice the document into smaller pieces called **chunks** (~400 characters each).
+- **The "Torn Page" Trap**: If you tear a book into 500 tiny shreds, one shred might say: *"Coverage is capped at $1,000 for emergency accommodation."* If a user asks *"What is the car rental limit?"*, a simple search engine might pull that shred—even though it was actually about *flight delays*! The shred itself has no context.
+- **The Breadcrumb Solution**: Before we save any chunk, our parser prepends a navigation path:
+  ```text
+  [Card: TD Aeroplan VIP] > [Policy: Flight Delay Insurance] > [Section: Benefit Details] (Page 33)
+  ---
+  Coverage is capped at $1,000 for emergency accommodation after 4 hours delay.
+  ```
+  Now, every individual chunk carries its own identity, policy title, and exact page number, no matter where it gets moved.
+
+---
+
+### 7.3 What is an "Embedding"?
+- In computer science, computers cannot compare the "meaning" of words directly; they only know numbers.
+- An **embedding model** (in our case, `sentence-transformers/all-MiniLM-L6-v2`) is a neural network trained on millions of sentence pairs. It reads a chunk of text and converts it into a list of **384 floating-point numbers** called a **vector** (e.g. `[0.042, -0.198, 0.812, ...]`).
+- Think of these 384 numbers as coordinates on a map of human concepts. Sentences with similar meanings land near each other on the map:
+  - *"Flight was delayed for 5 hours"* and *"Plane late by five hours"* will have almost identical coordinate vectors, even though they share almost none of the same words!
+
+---
+
+### 7.4 What is "Cosine Similarity"?
+- How do we calculate how close two coordinate vectors are?
+- If you represent each 384-dimensional vector as an arrow pointing from the origin $(0,0,0...)$, **cosine similarity** measures the **angle** between the two arrows:
+  - Angle is $0^\circ$ ($\cos = 1.0$): The two sentences mean the exact same thing.
+  - Angle is $90^\circ$ ($\cos = 0.0$): The sentences are completely unrelated.
+  - Angle is $180^\circ$ ($\cos = -1.0$): The sentences are opposite.
+- Because our vectors are **L2-normalized** (length scaled to 1.0), the cosine similarity is just the simple **dot product** (multiplying corresponding numbers and summing them up). Our system calculates this across hundreds of chunks in less than **0.5 milliseconds** using NumPy.
+
+---
+
+### 7.5 Why Do We Need BM25 if We Have Embeddings? (The "$85,000" Problem)
+- Pure vector embeddings have a blind spot: **exact numbers and rare codes**.
+- To an embedding model, the phrases:
+  - *"Vehicles with maximum manufacturer suggested retail price of $85,000"*
+  - *"Vehicles with maximum manufacturer suggested retail price of $65,000"*
+  look 99.2% identical because the grammar and vocabulary are the same. But in an insurance claim, that $20,000 difference is everything!
+- **BM25 (Best Matching 25)** is a classic keyword search algorithm. It scores documents based on how many times your exact words appear, giving huge bonuses to rare terms like `$85,000`, `deductible`, or `MSRP`.
+- **BM25Plus**: A modern upgrade that ensures longer policy sections aren't unfairly penalized just because they contain more legal preamble.
+
+---
+
+### 7.6 What is Reciprocal Rank Fusion (RRF)?
+- Now we have two search engines:
+  1. **BM25** (Great at finding exact numbers and keywords).
+  2. **Dense Vectors** (Great at finding concepts and synonyms).
+- But BM25 gives scores like `18.42` or `4.1`, while vector search gives scores between `0.0` and `1.0`. You cannot simply add them together.
+- **RRF solves this by looking only at ranking positions (1st, 2nd, 3rd...), not raw scores:**
+  $$\text{Score}(chunk) = \frac{1}{60 + \text{BM25 Rank}} + \frac{1}{60 + \text{Dense Rank}}$$
+  - If a chunk ranks #1 in BM25 and #2 in Dense, it gets an unbeatable combined rank.
+  - If a chunk is only found by one method, it still gets credited, but chunks that satisfy **both** keyword match and semantic concept always rise to the top.
+
+---
+
+### 7.7 What is Grounded Generation & Negative Control?
+- Once the top-8 chunks are retrieved, we feed them to our local LLM (`qwen2.5:7b`).
+- We enforce strict **Citation Guardrails**:
+  - The model must output an exact 4-part structure: Direct Answer, Limits, Conditions, Citations.
+  - **Negative Control**: If a user asks *"Is my cat covered for travel emergency?"*, the retriever brings back the closest travel medical chunks. Those chunks only mention humans. The model is forbidden from extrapolating; it must explicitly decline coverage.
+
+---
+
+### 7.8 What is Server-Sent Events (SSE)?
+- Instead of waiting 10 seconds for the LLM to write a 300-word answer and returning it all at once, **SSE** keeps an open HTTP connection between FastAPI and your browser.
+- As the model generates each word (or token) in real time, FastAPI pushes it through the wire (`event: token`).
+- In `frontend/app.js`, a `ReadableStreamDefaultReader` catches each token and displays it on screen instantly, giving you a smooth, responsive, real-time typing experience.
+
+---
+
+## 8. Guided Reading Order for Beginners
+
+If you want to read through the repository to learn how a production RAG system works from scratch, follow this step-by-step path:
+
+```text
+Step 1: Inspect the Raw Data
+   └─ data/extracted/td_aeroplan_visa_infinite_privilege_card_coi.md
+      (Look at how a 52-page PDF looks once converted to continuous Markdown with tables)
+
+Step 2: Understand Parsing & Hierarchy
+   └─ src/parser.py (Read parse_pdf and _split_markdown_into_sections)
+      (See how bookmarks and headings turn into DocumentChunk objects with breadcrumbs)
+
+Step 3: Understand Storage & Vectorization
+   └─ src/storage.py (Read save_card_index and load_card_index)
+      (See how BM25Plus is fitted and how MiniLM-L6-v2 encodes chunks into embeddings.npy)
+
+Step 4: Understand Hybrid Retrieval & RRF
+   └─ src/retriever.py (Read _filter_stopwords and retrieve)
+      (See how dual-scoring works and how RRF mathematically merges ranks)
+
+Step 5: Understand Grounded Generation
+   └─ src/generator.py (Read SYSTEM_PROMPT, _build_context_prompt, and generate_stream)
+      (See how the LLM is constrained to produce citations and avoid hallucinations)
+
+Step 6: Understand the API & Streaming Protocol
+   └─ api/main.py (Read sse_event_generator and stream_query)
+      (See how FastAPI packages retrieved context, tokens, and citations into an SSE stream)
+
+Step 7: Understand the Client Interface
+   └─ frontend/app.js (Read executeStreamQuery and renderMarkdown)
+      (See how JavaScript reads the stream and renders the Dark Fintech UI)
+
+Step 8: Run and Read the Tests
+   └─ tests/test_benchmark_td.py
+      (See the 10 real-world benchmark questions that verify 100% precision)
+```
+
+---
+
+## 9. Curated External Resources & Further Reading
+
+To deepen your theoretical and practical knowledge of RAG, explore these industry-standard guides and papers:
+
+### Visual Guides & Primers
+1. **[The Illustrated Word2vec by Jay Alammar](https://jalammar.github.io/illustrated-word2vec/)**: The world's best intuitive, animated explanation of word vectors and embeddings.
+2. **[Pinecone's Visual Guide to Hybrid Search](https://www.pinecone.io/learn/hybrid-search-intro/)**: Explains why combining dense vectors with sparse keyword search (BM25) outperforms either method alone.
+3. **[Cohere's Guide to RAG (Retrieval-Augmented Generation)](https://docs.cohere.com/docs/retrieval-augmented-generation-rag)**: Clear explanation of retrieval augmented generation with diagrams.
+
+### Core Papers & Documentation
+1. **Reciprocal Rank Fusion (Original Paper)**:  
+   *Cormack, Clarke, and Büttcher (2009)*: *"Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods."* Explains the mathematical derivation of why $k=60$ works so effectively across different search engines.
+2. **[Sentence-Transformers Documentation (SBERT)](https://sbert.net/)**: The official documentation for `all-MiniLM-L6-v2` and dense representation learning.
+3. **[BM25Plus Paper & Explanation](https://nlp.stanford.edu/IR-book/html/htmldition1/okapi-bm25-a-non-classical-probabilistic-model-1.html)**: Stanford NLP textbook on BM25 probabilistic relevance models and length normalization.
+4. **[FastAPI Streaming Responses & Server-Sent Events](https://fastapi.tiangolo.com/advanced/custom-response/#streamingresponse)**: Official FastAPI guide on streaming generators and real-time response delivery.
+5. **[Ollama Model Library & API Reference](https://github.com/ollama/ollama/blob/main/docs/api.md)**: How local LLMs like `qwen2.5` execute inference locally via REST endpoints.
+
