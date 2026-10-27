@@ -31,3 +31,54 @@ def test_generator_formats_prompt_and_parses_citations():
     assert len(response.citations) == 1
     assert response.citations[0]["page_number"] == 33
     assert response.citations[0]["breadcrumb"] == sample_chunk.breadcrumb
+
+def test_generator_streams_tokens():
+    mock_client = MagicMock()
+    # Client stream returns iterator of token dicts
+    mock_client.chat.return_value = [
+        {"message": {"content": "### Direct "}},
+        {"message": {"content": "Answer\n"}},
+        {"message": {"content": "Coverage is confirmed."}}
+    ]
+
+    generator = LLMGenerator(ollama_client=mock_client)
+    sample_chunk = DocumentChunk(
+        chunk_id="c1",
+        card_name="TD VIP",
+        breadcrumb="[Card: TD VIP] > [Policy: Flight Delay] > [Section: Section 5] (Page 33)",
+        page_number=33,
+        content="Flight delay covers up to $1,000.",
+        full_text_with_context="[Card: TD VIP] > [Policy: Flight Delay] > [Section: Section 5] (Page 33)\n---\nFlight delay covers up to $1,000."
+    )
+    scored = [ScoredChunk(chunk=sample_chunk, score=0.9, retrieval_method="hybrid")]
+
+    tokens = list(generator.generate_stream("Am I covered?", scored))
+    full_output = "".join(tokens)
+    assert "### Direct Answer" in full_output
+    assert "Coverage is confirmed." in full_output
+
+def test_generator_fallback_when_offline():
+    # Generator with non-existent base URL to trigger fallback
+    generator = LLMGenerator(base_url="http://localhost:99999")
+    sample_chunk = DocumentChunk(
+        chunk_id="c1",
+        card_name="TD VIP",
+        breadcrumb="[Card: TD VIP] > [Policy: Flight Delay] > [Section: Section 5] (Page 33)",
+        page_number=33,
+        content="Flight delay covers up to $1,000.",
+        full_text_with_context="[Card: TD VIP] > [Policy: Flight Delay] > [Section: Section 5] (Page 33)\n---\nFlight delay covers up to $1,000."
+    )
+    scored = [ScoredChunk(chunk=sample_chunk, score=0.9, retrieval_method="hybrid")]
+
+    # Normal generate fallback
+    resp = generator.generate("What is the flight delay limit?", scored)
+    assert "### Direct Answer" in resp.answer_markdown
+    assert "Flight delay covers up to $1,000." in resp.answer_markdown
+    assert len(resp.citations) == 1
+
+    # Streaming generate fallback
+    stream_tokens = list(generator.generate_stream("What is the flight delay limit?", scored))
+    stream_output = "".join(stream_tokens)
+    assert "### Direct Answer" in stream_output
+    assert "Flight delay covers up to $1,000." in stream_output
+

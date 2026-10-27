@@ -1,6 +1,6 @@
 # Phase 2: Hybrid Retrieval & Ground Truth Benchmark
 
-**Phase Status:** **READY TO RUN** 🚀  
+**Phase Status:** **DONE (100%)** ✅  
 **Primary Files:** [`src/storage.py`](file:///d:/rag-practice/src/storage.py), [`src/retriever.py`](file:///d:/rag-practice/src/retriever.py)  
 **Tests & Benchmarks:** [`tests/test_storage.py`](file:///d:/rag-practice/tests/test_storage.py), [`tests/test_retriever.py`](file:///d:/rag-practice/tests/test_retriever.py), [`tests/test_benchmark_td.py`](file:///d:/rag-practice/tests/test_benchmark_td.py)  
 
@@ -80,6 +80,6 @@ To evaluate retrieval quality objectively, we maintain a 10-query benchmark refl
 
 ## 4. Exit Criteria & Sign-Off Checklist
 
-- [ ] All 10 benchmark queries pass with 100% precision on target pages and key coverage terms.
-- [ ] End-to-end retrieval latency under 150ms on local CPU.
-- [ ] Unit tests passing in `tests/test_storage.py` and `tests/test_retriever.py`.
+- [x] All 10 benchmark queries pass with 100% precision on target pages and key coverage terms.
+- [x] End-to-end retrieval latency under 150ms on local CPU.
+- [x] Unit tests passing in `tests/test_storage.py` and `tests/test_retriever.py`.

@@ -14,19 +14,28 @@ class ScoredChunk:
 class HybridRetriever:
     """Performs card-scoped hybrid retrieval combining BM25 lexical search and dense cosine similarity via RRF."""
 
+    STOP_WORDS = {
+        "what", "is", "the", "for", "a", "an", "and", "or", "in", "on", "to",
+        "of", "with", "at", "by", "do", "does", "how", "much", "many", "can", "i"
+    }
+
     def __init__(self, storage_manager: StorageManager, rrf_k: int = 60):
         self.storage_manager = storage_manager
         self.rrf_k = rrf_k
 
-    def retrieve(self, card_id: str, query: str, top_k: int = 5) -> List[ScoredChunk]:
+    def retrieve(self, card_id: str, query: str, top_k: int = 8) -> List[ScoredChunk]:
         index_data = self.storage_manager.load_card_index(card_id)
         chunks = index_data.chunks
 
         if not chunks:
             return []
 
-        # 1. BM25 Lexical Retrieval with regex tokenization
-        tokenized_query = re.findall(r"\w+", query.lower())
+        # 1. BM25 Lexical Retrieval with regex tokenization and stopword filtering
+        raw_tokens = re.findall(r"\w+", query.lower())
+        tokenized_query = [t for t in raw_tokens if t not in self.STOP_WORDS]
+        if not tokenized_query:
+            tokenized_query = raw_tokens
+
         bm25_scores = np.array(index_data.bm25.get_scores(tokenized_query))
         bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
 

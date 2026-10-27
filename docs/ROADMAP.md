@@ -13,9 +13,9 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **Setup & Cleanup** | Directory Organization | Keep `data/` clean for raw PDFs only; move code to root | **DONE** ✅ | — |
 | **Phase 1** | Ingestion & Breadcrumb Parsing | Dynamic card discovery, TOC/layout parser, breadcrumbs | **DONE (100%)** ✅ | [Phase 1 Guide](phases/PHASE_1_INGESTION.md) |
-| **Phase 2** | Hybrid Retrieval & Benchmark | Card-scoped BM25Plus + Dense RRF store, 10/10 tests pass | **READY TO RUN** 🚀 | [Phase 2 Guide](phases/PHASE_2_RETRIEVAL.md) |
-| **Phase 3** | Grounded Synthesis & Guardrails | Local Ollama LLM integration, zero-hallucination prompt | **NOT STARTED** ⏹️ | [Phase 3 Guide](phases/PHASE_3_SYNTHESIS.md) |
-| **Phase 4** | Web Interface & Multi-Bank | FastAPI service, Vanilla HTML/CSS/JS UI, Scotia/CIBC validation | **NOT STARTED** ⏹️ | [Phase 4 Guide](phases/PHASE_4_FULLSTACK_UI.md) |
+| **Phase 2** | Hybrid Retrieval & Benchmark | Card-scoped BM25Plus + Dense RRF store, 10/10 tests pass | **DONE (100%)** ✅ | [Phase 2 Guide](phases/PHASE_2_RETRIEVAL.md) |
+| **Phase 3** | Grounded Synthesis & Guardrails | Local Ollama LLM integration, zero-hallucination prompt | **DONE (100%)** ✅ | [Phase 3 Guide](phases/PHASE_3_SYNTHESIS.md) |
+| **Phase 4** | Web Interface & Multi-Bank | FastAPI service, Vanilla HTML/CSS/JS UI, Scotia/CIBC validation | **READY TO START** 🚀 | [Phase 4 Guide](phases/PHASE_4_FULLSTACK_UI.md) |
 
 > **Architectural Changes & History**: See [Design Change Records](design_changes/README.md) (e.g. [DCR-001: Phase 1 Parser Refactor](design_changes/001_phase1_parser_hierarchical_tracking.md)).
 

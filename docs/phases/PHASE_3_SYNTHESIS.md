@@ -1,6 +1,6 @@
 # Phase 3: Grounded Synthesis & Citation Guardrails
 
-**Phase Status:** **NOT STARTED** ⏹️  
+**Phase Status:** **DONE (100%)** ✅  
 **Primary Files:** [`src/generator.py`](file:///d:/rag-practice/src/generator.py)  
 **Tests:** [`tests/test_generator.py`](file:///d:/rag-practice/tests/test_generator.py)  
 
@@ -80,7 +80,7 @@ By default, the system runs locally via Ollama without sending financial documen
 
 ## 5. Exit Criteria & Sign-Off Checklist
 
-- [ ] Generator returns structured 4-part responses conforming to the schema.
-- [ ] Negative queries (e.g., pet medical emergency) properly decline without hallucinating coverage.
-- [ ] Citations match retrieved chunk breadcrumbs and page numbers.
-- [ ] Unit tests in `tests/test_generator.py` pass with mock and live models.
+- [x] Generator returns structured 4-part responses conforming to the schema.
+- [x] Negative queries (e.g., pet medical emergency) properly decline without hallucinating coverage.
+- [x] Citations match retrieved chunk breadcrumbs and page numbers.
+- [x] Unit tests in `tests/test_generator.py` pass with mock and live models.
