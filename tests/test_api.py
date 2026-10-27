@@ -33,3 +33,10 @@ def test_api_query_stream():
             if line:
                 events.append(line)
         assert any("event: context" in e or "event: token" in e for e in events)
+
+def test_api_serves_frontend():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Credit Card Insurance RAG" in response.text
+    assert "text/html" in response.headers["content-type"]
+
