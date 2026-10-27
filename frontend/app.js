@@ -105,17 +105,24 @@ document.addEventListener("DOMContentLoaded", () => {
             updateCardDisplay();
         });
 
-        // Quick prompt chips
+        // Quick prompt chips - populate input field so user can edit and submit manually
         suggestionChips.addEventListener("click", (e) => {
             const chip = e.target.closest(".chip");
             if (chip && chip.dataset.query) {
                 queryInput.value = chip.dataset.query;
                 queryInput.focus();
-                handleFormSubmit();
+                queryInput.selectionStart = queryInput.selectionEnd = queryInput.value.length;
+                queryInput.style.height = "auto";
+                queryInput.style.height = `${Math.min(queryInput.scrollHeight, 120)}px`;
             }
         });
 
-        // Auto-expand textarea & Enter to submit
+        // Auto-expand textarea on typing & Enter to submit
+        queryInput.addEventListener("input", () => {
+            queryInput.style.height = "auto";
+            queryInput.style.height = `${Math.min(queryInput.scrollHeight, 120)}px`;
+        });
+
         queryInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -144,6 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Append User Message
         appendUserMessage(query);
         queryInput.value = "";
+        queryInput.style.height = "auto";
 
         // Append Assistant Message with Streaming Placeholder
         const assistantMsgEl = createAssistantMessageElement();
