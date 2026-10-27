@@ -1,7 +1,7 @@
 # Phase 4: Full-Stack Web Application & Cross-Bank Verification
 
-**Phase Status:** **NOT STARTED** ⏹️  
-**Primary Files (Planned):** `api/main.py`, `frontend/index.html`, `frontend/style.css`, `frontend/app.js`  
+**Phase Status:** **DONE (100%)** ✅  
+**Primary Files:** `api/main.py`, `frontend/index.html`, `frontend/style.css`, `frontend/app.js`, `tests/test_api.py`, `tests/test_multibank.py`  
 **Multi-Bank Scope:** Validation across `data/cibc/`, `data/scotia/`, and `data/td/`  
 
 ---
@@ -45,7 +45,7 @@ flowchart LR
     Gen --> Drawer
 ```
 
-### Planned REST & SSE API Surface
+### REST & SSE API Surface
 - `GET /api/cards`: Returns list of discovered cards with IDs and bank brands.
 - `POST /api/query`: Accepts `{ "card_id": "...", "query": "..." }`, returns Server-Sent Events (SSE) stream of tokens followed by structured citation metadata.
 - `POST /api/index/{card_id}`: Triggers on-demand background indexing for newly uploaded PDFs.
@@ -64,17 +64,18 @@ flowchart LR
 
 ## 4. Cross-Bank Validation Plan
 
-Once the full-stack interface is functional, we will test the entire ingestion and retrieval pipeline across non-TD bank booklets:
+Tested and verified across Canadian banking certificates:
 - `data/cibc/CIBC Aeroplan Visa Infinite Privilege Card-Insurance.pdf` (56 pages)
 - `data/cibc/CIBC Dividend Visa Infinite Card-Insurance.pdf` (36 pages)
 - `data/scotia/Passport_Visa_Inifite_Privilege_Card_Certificate_of_Insurance_2025_En.pdf` (48 pages)
-- `data/scotia/Scotia Momentum  Visa Infinite + Card-COI-EN.pdf` (21 pages, no PDF outline bookmark fallback test)
+- `data/scotia/Scotia Momentum  Visa Infinite + Card-COI-EN.pdf` (21 pages)
 
 ---
 
 ## 5. Exit Criteria & Sign-Off Checklist
 
-- [ ] FastAPI backend running with CORS, streaming SSE, and automated error handling.
-- [ ] Responsive Web UI loaded and verified in browser without console errors.
-- [ ] Source citation drawer dynamically opens and links to referenced document pages.
-- [ ] Multi-bank test queries pass on CIBC and Scotiabank cards without code changes.
+- [x] FastAPI backend running with CORS, streaming SSE, and automated error handling.
+- [x] Responsive Web UI loaded and verified in browser without console errors.
+- [x] Source citation drawer dynamically opens and links to referenced document pages.
+- [x] Multi-bank test queries pass on CIBC and Scotiabank cards without code changes.
+
