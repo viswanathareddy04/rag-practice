@@ -41,7 +41,7 @@
   - `ChildChunk(child_id, parent_id, card_id, card_name, policy_name, section_title, page_number, content, breadcrumb, parent_content)`
   - Function: `InsuranceDocParser.parse_pdf(pdf_path, card_name, card_id) -> Tuple[List[ParentSection], List[ChildChunk]]`
 
-- [ ] **Step 1: Write the failing tests for Universal Layout Parser**
+- [x] **Step 1: Write the failing tests for Universal Layout Parser**
 
 ```python
 # tests/test_parser.py
@@ -100,12 +100,12 @@ def test_parser_preserves_table_rows_intact():
         assert tc.content.count("|") >= 2
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_parser.py -v`  
 Expected: FAIL with `AttributeError` or missing `ParentSection` / `parse_markdown_text`.
 
-- [ ] **Step 3: Implement Universal Layout Parser in `src/parser.py`**
+- [x] **Step 3: Implement Universal Layout Parser in `src/parser.py`**
 
 Refactor `src/parser.py` to:
 1. Define `ParentSection` and `ChildChunk` dataclasses.
@@ -119,12 +119,12 @@ Refactor `src/parser.py` to:
    - Every child links to `parent_id` and copies `parent_content`.
 5. Update `parse_pdf()` to use `pymupdf4llm.to_markdown(doc, page_chunks=True)` and call `parse_markdown_text()`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_parser.py -v`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/parser.py tests/test_parser.py
@@ -146,7 +146,7 @@ git commit -m "feat(parser): implement universal parent-document layout parser"
   - `BM25Vectorizer.encode_document(text: str) -> SparseVector(indices, values)`
   - `BM25Vectorizer.encode_query(query: str) -> SparseVector(indices, values)`
 
-- [ ] **Step 1: Write the failing test for `BM25Vectorizer`**
+- [x] **Step 1: Write the failing test for `BM25Vectorizer`**
 
 ```python
 # tests/test_bm25_vectorizer.py
@@ -182,12 +182,12 @@ def test_bm25_vectorizer_encodes_query_with_stopword_pruning():
     assert any(idx in tokens_encoded for idx in query_vector.indices)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_bm25_vectorizer.py -v`  
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.bm25_vectorizer'`
 
-- [ ] **Step 3: Implement `BM25Vectorizer` in `src/bm25_vectorizer.py`**
+- [x] **Step 3: Implement `BM25Vectorizer` in `src/bm25_vectorizer.py`**
 
 ```python
 import math
@@ -266,12 +266,12 @@ class BM25Vectorizer:
         return models.SparseVector(indices=indices, values=values)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_bm25_vectorizer.py -v`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bm25_vectorizer.py tests/test_bm25_vectorizer.py
@@ -294,7 +294,7 @@ git commit -m "feat(retrieval): implement cloud-native BM25 sparse vectorizer"
   - `QdrantStorageManager.is_indexed(card_id) -> bool`
   - `QdrantStorageManager.client: QdrantClient`
 
-- [ ] **Step 1: Write the failing test for `QdrantStorageManager`**
+- [x] **Step 1: Write the failing test for `QdrantStorageManager`**
 
 ```python
 # tests/test_storage_qdrant.py
@@ -345,12 +345,12 @@ def test_qdrant_storage_manager_upserts_and_indexes():
     assert p.payload["page_number"] == 8
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_storage_qdrant.py -v`  
 Expected: FAIL with missing `QdrantStorageManager` methods or attributes.
 
-- [ ] **Step 3: Implement `QdrantStorageManager` in `src/storage.py`**
+- [x] **Step 3: Implement `QdrantStorageManager` in `src/storage.py`**
 
 Refactor `src/storage.py` to:
 1. Accept optional `client: Optional[QdrantClient]`. If `client is None`, read `QDRANT_URL` and `QDRANT_API_KEY` from environment. If `QDRANT_API_KEY` is missing, fallback to in-memory/local Qdrant.
@@ -367,12 +367,12 @@ Refactor `src/storage.py` to:
    - Generates deterministic UUID for each point: `uuid.uuid5(uuid.NAMESPACE_DNS, c.child_id)`.
    - Upserts points in batches with full payload (`parent_content`, `page_number`, `breadcrumb`, etc.).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_storage_qdrant.py -v`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/storage.py tests/test_storage_qdrant.py
@@ -393,7 +393,7 @@ git commit -m "feat(storage): implement cloud Qdrant dual-vector storage manager
   - `RetrievedContext(parents: List[ParentSection], citations: List[Dict[str, Any]])`
   - Method: `HybridParentRetriever.retrieve(card_id, query) -> RetrievedContext`
 
-- [ ] **Step 1: Write the failing test for `HybridParentRetriever`**
+- [x] **Step 1: Write the failing test for `HybridParentRetriever`**
 
 ```python
 # tests/test_retriever.py
@@ -441,12 +441,12 @@ def test_retriever_hybrid_rrf_and_parent_deduplication():
     assert "85,000" in result.citations[0]["content"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_retriever.py -v`  
 Expected: FAIL with missing `HybridParentRetriever` or `RetrievedContext`.
 
-- [ ] **Step 3: Implement `HybridParentRetriever` in `src/retriever.py`**
+- [x] **Step 3: Implement `HybridParentRetriever` in `src/retriever.py`**
 
 Refactor `src/retriever.py` to:
 1. Define `RetrievedContext(parents: List[ParentSection], citations: List[Dict[str, Any]])`.
@@ -459,12 +459,12 @@ Refactor `src/retriever.py` to:
 5. Deduplicate parents by `parent_id` while preserving rank order, extracting top 2–3 unique `ParentSection`s.
 6. Assemble child citations (page number, breadcrumb, clause content, score).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_retriever.py -v`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/retriever.py tests/test_retriever.py
@@ -487,7 +487,7 @@ git commit -m "feat(retriever): implement cloud hybrid retrieval with parent ded
   - `LLMGenerator.stream_response(question, retrieved_context) -> Generator[str, None, None]`
   - FastAPI `/api/query` streaming Server-Sent Events with parent synthesis and child citations drawer data.
 
-- [ ] **Step 1: Write the failing test for `LLMGenerator` with `RetrievedContext`**
+- [x] **Step 1: Write the failing test for `LLMGenerator` with `RetrievedContext`**
 
 ```python
 # tests/test_generator.py
@@ -514,12 +514,12 @@ def test_generator_builds_parent_context_prompt():
     assert "USER QUESTION:" in prompt
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_generator.py -v`  
 Expected: FAIL with signature or attribute error.
 
-- [ ] **Step 3: Update `src/generator.py` and `api/main.py`**
+- [x] **Step 3: Update `src/generator.py` and `api/main.py`**
 
 1. Update `src/generator.py` to:
    - Accept `RetrievedContext` in `_build_context_prompt()`, `generate_response()`, and `stream_response()`.
@@ -530,12 +530,12 @@ Expected: FAIL with signature or attribute error.
    - Send `data: {"type": "citations", "citations": retrieved_context.citations}` over SSE.
    - Stream synthesized tokens from `generator.stream_response(req.query, retrieved_context)`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_generator.py -v`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/generator.py api/main.py tests/test_generator.py
@@ -560,7 +560,7 @@ git commit -m "feat(generator): update LLM prompt and API SSE stream for parent-
   - Benchmark passing on CIBC and TD policies.
   - Updated architectural reference manual.
 
-- [ ] **Step 1: Write `.env.example` and CIBC Benchmark Test**
+- [x] **Step 1: Write `.env.example` and CIBC Benchmark Test**
 
 ```python
 # tests/test_benchmark_cibc.py
@@ -588,12 +588,12 @@ def test_cibc_benchmark_rental_car_msrp():
     assert "48" in combined_parent_text
 ```
 
-- [ ] **Step 2: Run benchmark test to verify it passes**
+- [x] **Step 2: Run benchmark test to verify it passes**
 
 Run: `pytest tests/test_benchmark_cibc.py -v`  
 Expected: PASS
 
-- [ ] **Step 3: Implement `scripts/index_all_cards.py`**
+- [x] **Step 3: Implement `scripts/index_all_cards.py`**
 
 Create automated CLI script that:
 1. Loads `.env`
@@ -602,12 +602,12 @@ Create automated CLI script that:
 4. Upserts into Qdrant Cloud with progress logs
 5. Reports total parents, total children, and vector collection health.
 
-- [ ] **Step 4: Run full test suite**
+- [x] **Step 4: Run full test suite**
 
 Run: `pytest tests/ -v`  
 Expected: All unit, storage, retrieval, and benchmark tests PASS.
 
-- [ ] **Step 5: Commit & update docs**
+- [x] **Step 5: Commit & update docs**
 
 ```bash
 git add .env.example scripts/index_all_cards.py tests/test_benchmark_cibc.py tests/test_benchmark_td.py docs/ARCHITECTURE_AND_TECHNICAL_REFERENCE.md
