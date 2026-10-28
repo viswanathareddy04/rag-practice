@@ -12,9 +12,9 @@ Insurance certificates are legal contracts governed by exact numbers, strict exc
 3. **Hallucination Risks in Generative Synthesis**: Standard LLM prompts hallucinate plausible-sounding coverage (e.g., claiming pet medical emergencies or volcanic ash delays are covered when they are explicitly excluded).
 
 To solve these domain challenges, this system was engineered around four core architectural pillars:
-- **Hierarchical Breadcrumb Prepending**: Every extracted chunk is tagged with its full context trail: `[Card: Bank Name Card] > [Policy: Policy Name] > [Section: Section Title] (Page X)`.
-- **Hybrid Reciprocal Rank Fusion (RRF)**: Combines exact lexical matching (BM25Plus with question-stopword filtering) and dense semantic vectors (`all-MiniLM-L6-v2`) to capture both exact contractual terms ($85,000, 48 hours) and natural language user intent.
-- **Micro-Footprint In-Memory Vector Storage**: Storing L2-normalized NumPy matrices directly on disk eliminates heavy external database dependencies (e.g. Pinecone, ChromaDB, Milvus), achieving sub-millisecond retrieval with 0 MB background RAM overhead.
+- **Two-Tier Parent-Document Architecture (Small-to-Big)**: Small, granular child chunks (~100–150 words) act as sensitive "search beacons", while full parent sections (~600–1,500 words) provide complete legal synthesis context without clause orphaning.
+- **Qdrant Cloud Native Hybrid (Dense + Sparse BM25)**: Both dense semantic embeddings (`BAAI/bge-base-en-v1.5`, 768-d on NVIDIA RTX 5070 GPU) and BM25 sparse inverted indices live natively inside Qdrant Cloud with server-side Reciprocal Rank Fusion (RRF).
+- **Universal Bank-Agnostic Markdown Parser**: Parses document typography directly from standardized Markdown (`#`, `##`, `###`, tables `|`, paragraphs `\n\n`) with zero bank-specific branching logic, easily scaling to 20–30+ credit card booklets.
 - **Grounded, 4-Part Enforced Synthesis & Verification**: A local open-weights LLM (`qwen2.5:7b` via Ollama) guided by a zero-hallucination system prompt that enforces strict negative rejection and mandatory page-level citations.
 
 ---
@@ -23,34 +23,31 @@ To solve these domain challenges, this system was engineered around four core ar
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion ["1. Document Ingestion & Hierarchy Parsing"]
-        PDF["Raw Digital PDF (data/{bank}/*.pdf)"] --> PyMuPDF["PyMuPDF (fitz) Outline Extraction"]
-        PDF --> PyMuPDF4LLM["pymupdf4llm Markdown & Table Extraction"]
-        PyMuPDF & PyMuPDF4LLM --> Normalizer["Unicode Normalization (\u2011, quotes, spaces)"]
-        Normalizer --> HierarchyTracker["Hierarchical Breadcrumb Tracker"]
-        HierarchyTracker --> Chunker["Boundary-Aware Chunker (400 chars, 80 overlap)"]
-        Chunker --> DocChunks["DocumentChunk Objects with Full Breadcrumb Context"]
+    subgraph Ingestion ["1. Universal Document Ingestion & Hierarchy Parsing"]
+        PDF["Raw Digital PDF (data/{bank}/*.pdf)"] --> PyMuPDF4LLM["pymupdf4llm Markdown & Table Extraction"]
+        PyMuPDF4LLM --> UniversalParser["Universal Markdown-Stack Parser (#, ##, ###)"]
+        UniversalParser --> ParentSections["ParentSection Objects (~600-1500 words)"]
+        ParentSections --> ChildChunker["Semantic Block Chunker (Tables, Double-Newlines, Sentences)"]
+        ChildChunker --> ChildChunks["ChildChunk Objects (~100-150 words with parent_id & parent_content)"]
     end
 
-    subgraph Storage ["2. Dual-Artifact Local Persistence"]
-        DocChunks --> JSONStore[".index/{card_id}/chunks.json"]
-        DocChunks --> BM25PlusIndexer["BM25Plus Tokenizer & Frequencies"]
-        BM25PlusIndexer --> BM25PKL[".index/{card_id}/bm25.pkl"]
-        DocChunks --> Embedder["SentenceTransformer (all-MiniLM-L6-v2)"]
-        Embedder --> EmbedNPY[".index/{card_id}/embeddings.npy (L2-Normalized)"]
+    subgraph Storage ["2. Cloud-Native Qdrant Storage Layer"]
+        ChildChunks --> DenseEmbedder["Dense Embedder (bge-base-en-v1.5, 768-d)"]
+        ChildChunks --> BM25Vectorizer["Cloud BM25 Sparse Vectorizer"]
+        DenseEmbedder & BM25Vectorizer --> QdrantCloud["Qdrant Cloud Cluster (insurance_chunks collection)"]
+        ParentSections -.->|Denormalized in Payload| QdrantCloud
     end
 
-    subgraph Retrieval ["3. Hybrid RRF Retrieval Engine"]
-        UserQuery["User Natural Language Question"] --> StopwordFilter["Stopword & Preamble Filter"]
-        StopwordFilter --> LexicalSearch["BM25Plus Lexical Scoring"]
-        UserQuery --> DenseEmbed["Dense Vector Encoding"]
-        DenseEmbed --> CosineSim["NumPy Dot-Product Cosine Similarity"]
-        LexicalSearch & CosineSim --> RRF["Reciprocal Rank Fusion (k = 60)"]
-        RRF --> TopK["Top-8 Grounded Context Blocks"]
+    subgraph Retrieval ["3. Cloud Hybrid RRF & Parent Expansion Engine"]
+        UserQuery["User Natural Language Question"] --> DualEncode["Encode Dense Vector + BM25 Sparse Query"]
+        DualEncode --> CloudRRF["Qdrant Cloud Single query_points() with card_id Filter & Server-Side RRF"]
+        CloudRRF --> TopChildren["Top-8 Child Chunks (Search Hits)"]
+        TopChildren --> Deduplicator["Parent Deduplication by parent_id"]
+        Deduplicator --> TopParents["Top 2-3 Unique Parent Sections (~1,500-2,500 words)"]
     end
 
     subgraph Synthesis ["4. Grounded Synthesis & Citations"]
-        TopK --> PromptBuilder["Strict Grounding Context Prompt"]
+        TopParents --> PromptBuilder["Full Parent Context Prompt"]
         PromptBuilder --> Ollama["Local LLM (qwen2.5:7b via Ollama /api/chat)"]
         Ollama --> FourPartSchema["4-Part Schema: Direct Answer, Limits, Exclusions, Citations"]
     end
@@ -58,7 +55,7 @@ flowchart TD
     subgraph Delivery ["5. Full-Stack Web App"]
         FourPartSchema --> FastAPISSE["FastAPI Server-Sent Events (SSE /api/query)"]
         FastAPISSE --> WebUI["Dark Fintech Web UI (HTML5 / Vanilla CSS / ES6 JS)"]
-        TopK --> CitationsDrawer["Real-Time Grounding Sources Drawer"]
+        TopChildren --> CitationsDrawer["Real-Time Child-Highlighted Citation Drawer (Exact Pages)"]
     end
 ```
 
@@ -69,12 +66,12 @@ flowchart TD
 | Layer | Component Chosen | Key Alternatives Evaluated | Why This Chosen Won | Why Alternatives Were Rejected |
 | :--- | :--- | :--- | :--- | :--- |
 | **PDF Extraction** | `pymupdf4llm` + `PyMuPDF` (`fitz`) | `pypdf`, `pdfplumber`, `unstructured`, `Tesseract OCR`, Vision LLMs (LayoutLM, GPT-4V) | Extracts multi-column text in reading order, preserves markdown tables verbatim, and extracts native PDF outline bookmarks (`doc.get_toc()`) in <1.5s for 52 pages. | `pypdf` loses document layout and merges multi-column text across paragraphs. `pdfplumber` is slow (15–30s per document). OCR / Vision LLMs introduce massive inference costs ($0.05/page) and OCR noise on clean digital PDFs. |
-| **Document Chunking** | Hierarchy-Aware Breadcrumb Prepending | Fixed-size chunking (RecursiveCharacterTextSplitter), Semantic Chunking | Prepending `[Card] > [Policy] > [Section] (Page X)` guarantees that isolated clauses retain full legal jurisdiction and exact page citations. | Fixed-size chunking orphans clauses, making it impossible for the retriever to distinguish whether a $1,000 limit applies to baggage or flight delay. Semantic chunking is non-deterministic and ignores document page boundaries. |
-| **Lexical Search** | `rank-bm25` (`BM25Plus`) | Standard `BM25Okapi`, `Whoosh`, `Elasticsearch`, `SQLite FTS5` | `BM25Plus` prevents document length bias from unfairly penalizing long policy sections and features lower-bound tuning for rare numbers/terms ($85,000, deductible). Single Python file, serializable to a 100 KB pickle file. | `BM25Okapi` heavily penalizes longer policy sections with broad definitions. `Elasticsearch` requires a dedicated Java daemon consuming 2+ GB RAM. `SQLite FTS5` lacks BM25 parameter tuning ($k_1, b, \delta$) and requires complex SQL wrappers. |
-| **Dense Vector Embeddings** | `sentence-transformers/all-MiniLM-L6-v2` | `text-embedding-3-small` (OpenAI), `BAAI/bge-large-en-v1.5`, `nomic-embed-text` | 384 dimensions, ~80 MB memory footprint, runs entirely on CPU in <15ms per batch. High semantic density for legal and coverage terms without network calls or API keys. | Cloud embeddings (`text-embedding-3-small`) violate privacy requirements for sensitive financial documents and require paid API access. `bge-large` (1024-d, 1.34 GB) is 5x heavier and slower on CPU without yielding higher precision on insurance certificates. |
-| **Vector Storage** | Raw L2-Normalized NumPy Array (`embeddings.npy`) | `ChromaDB`, `Pinecone`, `Qdrant`, `Weaviate`, `Faiss` | A 52-page insurance policy produces ~213 chunks. A $(213, 384)$ float32 matrix is only **327 KB**. In-memory dot-product cosine similarity runs in **<0.5 milliseconds** with zero daemon overhead. | External vector databases (`Pinecone`, `Qdrant`, `ChromaDB`) introduce SQLite lock contention, schema migrations, network latency, and background daemon memory overhead (200MB–1GB RAM) for datasets that fit effortlessly in CPU L2/L3 cache. |
-| **Ranking Fusion** | Reciprocal Rank Fusion ($RRF, k=60$) | Linear Weighted Score Blend ($\alpha \cdot Dense + (1-\alpha) \cdot BM25$), Cross-Encoder Reranker | Scale-invariant rank fusion: merges uncalibrated BM25 scores (0–50+) and cosine similarities (-1.0 to 1.0) without needing fragile manual score normalization weights. | Score blending requires tedious hyperparameter tuning for every new document format. Cross-encoders (`bge-reranker-large`) add 300–800ms of CPU latency per query. |
-| **Generative LLM** | `qwen2.5:7b` (via local Ollama) | OpenAI `gpt-4o`, `llama3.2:3b`, `mistral:7b` | Exceptional structured compliance, native knowledge of contractual and financial clauses, zero hallucinations on negative control benchmarks, completely local and private. | Cloud APIs (`gpt-4o`) introduce privacy leaks and ongoing subscription costs. `llama3.2:3b` frequently hallucinated coverage on negative controls (e.g. inventing pet coverage). `mistral:7b` showed weaker adherence to the strict 4-part markdown schema. |
+| **Document Chunking** | Universal Parent-Document (Small-to-Big) Chunking | Flat fixed-size chunking, Semantic chunking | Decouples search resolution (~100–150 word child beacons) from synthesis context (~600–1,500 word complete parent sections). Eliminates vector dilution and clause orphaning. | Flat chunking orphans clauses, making it impossible for the retriever to distinguish whether a $1,000 limit applies to baggage or flight delay. Semantic chunking is non-deterministic and ignores document page boundaries. |
+| **Lexical Search** | Cloud-Native BM25 Sparse Vectors (in Qdrant) | Local `rank-bm25` (`BM25Plus`), `Elasticsearch`, `SQLite FTS5` | 100% cloud-hosted inside Qdrant Cloud. Enables server-side RRF fusion in a single network round-trip. Zero local pickle files needed on disk. | Local pickle files break stateless multi-server deployments. Elasticsearch requires a dedicated Java daemon consuming 2+ GB RAM. SQLite FTS5 requires dual query synchronization. |
+| **Dense Vector Embeddings** | `BAAI/bge-base-en-v1.5` (768-d) | `sentence-transformers/all-MiniLM-L6-v2`, `text-embedding-3-small`, `nomic-embed-text` | 768 dimensions, high semantic density, runs in <3ms on local NVIDIA GeForce RTX 5070 GPU. Fully local and private. | Cloud embeddings violate privacy requirements for sensitive financial documents and require paid API access. Nomic's 8k window is wasted on 150-word child chunks. |
+| **Vector & Document Storage** | Qdrant Cloud (`insurance_chunks`) | Raw NumPy matrices, ChromaDB, Pinecone, Weaviate | Unified cloud vector DB holding dense vectors, sparse BM25 vectors, and full parent document payloads. Pre-filtered HNSW searches with `card_id` index scale effortlessly to 30+ cards. | Raw NumPy matrices require local file coordination and cannot be queried by remote clients. ChromaDB has SQLite concurrency locking. Pinecone lacks native BM25 sparse vectors. |
+| **Ranking Fusion** | Qdrant Server-Side RRF Fusion ($k=60$) | Linear Weighted Score Blend ($\alpha \cdot Dense + (1-\alpha) \cdot BM25$), Cross-Encoder Reranker | Scale-invariant rank fusion: merges uncalibrated BM25 scores and cosine similarities directly inside the Qdrant Cloud cluster in one network call. | Score blending requires manual score normalization weights. Cross-encoders add 300–800ms of CPU latency per query. |
+| **Generative LLM** | `qwen2.5:7b` (via local Ollama) | OpenAI `gpt-4o`, `llama3.2:3b`, `mistral:7b` | Exceptional structured compliance, native knowledge of contractual and financial clauses, zero hallucinations on negative control benchmarks, completely local and private on RTX 5070 GPU. | Cloud APIs (`gpt-4o`) introduce privacy leaks and ongoing subscription costs. `llama3.2:3b` frequently hallucinated coverage on negative controls (e.g. inventing pet coverage). `mistral:7b` showed weaker adherence to the strict 4-part markdown schema. |
 | **Backend API** | `FastAPI` + `Uvicorn` | `Flask`, `Django`, `Express.js`, `Tornado` | Native asynchronous streaming support for Server-Sent Events (SSE), built-in Pydantic data validation, high throughput, and seamless static file mounting for zero-CORS deployment. | `Flask` lacks native async SSE streaming primitives. `Django` is monolithic and bloated for a lightweight inference microservice. |
 | **Frontend Architecture** | Vanilla HTML5, CSS Custom Properties, ES6 JavaScript | `React`, `Next.js`, `Vue`, `TailwindCSS` | Zero build step, instant load times, zero `node_modules` dependency decay, 100% fine-grained control over DOM streaming and custom Dark Fintech CSS glassmorphism. | `Next.js`/`React` requires Node.js runtime, build steps (`npm run build`), hydration delays, and massive bundle overhead for a single-page interactive assistant. `TailwindCSS` pollutes HTML markup with hundreds of utility classes. |
 
