@@ -16,11 +16,11 @@ if str(project_root) not in sys.path:
 
 from src.registry import CardRegistry
 from src.parser import InsuranceDocParser
-from src.storage import StorageManager
-from src.retriever import HybridRetriever
+from src.storage import StorageManager, QdrantStorageManager
+from src.retriever import HybridRetriever, HybridParentRetriever, RetrievedContext
 from src.generator import LLMGenerator
 
-app = FastAPI(title="Credit Card Insurance RAG API", version="1.0.0")
+app = FastAPI(title="Credit Card Insurance RAG API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,8 +35,14 @@ index_dir = project_root / ".index"
 frontend_dir = project_root / "frontend"
 
 registry = CardRegistry(base_dir=data_dir)
-storage = StorageManager(storage_dir=index_dir)
-retriever = HybridRetriever(storage_manager=storage, rrf_k=60)
+# Local fallback storage manager
+legacy_storage = StorageManager(storage_dir=index_dir)
+legacy_retriever = HybridRetriever(storage_manager=legacy_storage, rrf_k=60)
+
+# Cloud Qdrant storage manager
+qdrant_storage = QdrantStorageManager()
+qdrant_retriever = HybridParentRetriever(storage_manager=qdrant_storage, rrf_k=60)
+
 generator = LLMGenerator(model=os.getenv("LLM_MODEL", "qwen2.5:7b"))
 
 CARD_ALIASES = {
@@ -57,6 +63,7 @@ def get_status():
         "status": "ok",
         "model": generator.model,
         "ollama_base_url": generator.base_url,
+        "qdrant_collection": qdrant_storage.COLLECTION_NAME,
         "indexed_cards": indexed_list
     }
 
@@ -66,12 +73,12 @@ def get_cards():
     results = []
     for c in cards:
         effective_id = CARD_ALIASES.get(c.card_id, c.card_id)
-        indexed = storage.is_indexed(effective_id) or storage.is_indexed(c.card_id)
+        indexed = qdrant_storage.is_indexed(effective_id) or legacy_storage.is_indexed(effective_id) or legacy_storage.is_indexed(c.card_id)
         chunks_count = 0
-        if indexed:
-            target_id = effective_id if storage.is_indexed(effective_id) else c.card_id
+        if legacy_storage.is_indexed(effective_id) or legacy_storage.is_indexed(c.card_id):
+            target_id = effective_id if legacy_storage.is_indexed(effective_id) else c.card_id
             try:
-                data = storage.load_card_index(target_id)
+                data = legacy_storage.load_card_index(target_id)
                 chunks_count = len(data.chunks)
             except Exception:
                 pass
@@ -105,41 +112,75 @@ def index_card(card_id: str):
     start = time.time()
     parser = InsuranceDocParser(chunk_size=400, chunk_overlap=80)
     effective_id = CARD_ALIASES.get(card.card_id, card.card_id)
-    chunks = parser.parse_pdf(card.file_path, card_name=card.card_name, card_id=effective_id)
-    storage.save_card_index(effective_id, chunks)
+
+    # 1. Parse into ParentSections and ChildChunks
+    parents, children = parser.parse_pdf_parent_child(card.file_path, card_name=card.card_name, card_id=effective_id)
+    # 2. Index into Qdrant Cloud
+    qdrant_storage.save_card_chunks(effective_id, parents, children)
+
+    # Also build legacy index for offline safety
+    legacy_chunks = parser.parse_pdf(card.file_path, card_name=card.card_name, card_id=effective_id)
+    legacy_storage.save_card_index(effective_id, legacy_chunks)
     if effective_id != card.card_id:
-        storage.save_card_index(card.card_id, chunks)
+        legacy_storage.save_card_index(card.card_id, legacy_chunks)
 
     return {
         "status": "success",
         "card_id": effective_id,
-        "chunks_indexed": len(chunks),
+        "parent_sections": len(parents),
+        "children_indexed": len(children),
         "elapsed_seconds": round(time.time() - start, 2)
     }
 
 def sse_event_generator(card_id: str, query: str) -> Generator[str, None, None]:
     start_total = time.time()
-    scored_chunks = retriever.retrieve(card_id=card_id, query=query, top_k=8)
 
-    context_payload = [
-        {
-            "rank": i + 1,
-            "page_number": sc.chunk.page_number,
-            "breadcrumb": sc.chunk.breadcrumb,
-            "snippet": sc.chunk.content[:200] + "..." if len(sc.chunk.content) > 200 else sc.chunk.content,
-            "full_content": sc.chunk.content,
-            "score": round(sc.score, 4)
-        }
-        for i, sc in enumerate(scored_chunks)
-    ]
-    yield f"event: context\ndata: {json.dumps(context_payload)}\n\n"
+    # Prefer Qdrant Cloud Parent-Document Retriever
+    if qdrant_storage.is_indexed(card_id):
+        retrieved_ctx = qdrant_retriever.retrieve(card_id=card_id, query=query, top_k_parents=3, top_k_children=8)
+        
+        context_payload = [
+            {
+                "rank": i + 1,
+                "page_number": c.get("page_number", 1),
+                "breadcrumb": c.get("breadcrumb", ""),
+                "snippet": c.get("content", "")[:200] + "..." if len(c.get("content", "")) > 200 else c.get("content", ""),
+                "full_content": c.get("content", ""),
+                "score": round(c.get("score", 0.0), 4)
+            }
+            for i, c in enumerate(retrieved_ctx.citations)
+        ]
+        yield f"event: context\ndata: {json.dumps(context_payload)}\n\n"
 
-    tokens_stream = generator.generate_stream(query, scored_chunks)
-    for token in tokens_stream:
-        yield f"event: token\ndata: {json.dumps(token)}\n\n"
+        tokens_stream = generator.generate_stream(query, retrieved_ctx)
+        for token in tokens_stream:
+            yield f"event: token\ndata: {json.dumps(token)}\n\n"
 
-    citations_payload = generator.extract_citations(scored_chunks)
-    yield f"event: citations\ndata: {json.dumps(citations_payload)}\n\n"
+        yield f"event: citations\ndata: {json.dumps(retrieved_ctx.citations)}\n\n"
+
+    else:
+        # Fallback to legacy local retriever
+        scored_chunks = legacy_retriever.retrieve(card_id=card_id, query=query, top_k=8)
+
+        context_payload = [
+            {
+                "rank": i + 1,
+                "page_number": sc.chunk.page_number,
+                "breadcrumb": sc.chunk.breadcrumb,
+                "snippet": sc.chunk.content[:200] + "..." if len(sc.chunk.content) > 200 else sc.chunk.content,
+                "full_content": sc.chunk.content,
+                "score": round(sc.score, 4)
+            }
+            for i, sc in enumerate(scored_chunks)
+        ]
+        yield f"event: context\ndata: {json.dumps(context_payload)}\n\n"
+
+        tokens_stream = generator.generate_stream(query, scored_chunks)
+        for token in tokens_stream:
+            yield f"event: token\ndata: {json.dumps(token)}\n\n"
+
+        citations_payload = generator.extract_citations(scored_chunks)
+        yield f"event: citations\ndata: {json.dumps(citations_payload)}\n\n"
 
     elapsed = round((time.time() - start_total) * 1000, 1)
     yield f"event: done\ndata: {json.dumps({'elapsed_ms': elapsed})}\n\n"
@@ -147,13 +188,13 @@ def sse_event_generator(card_id: str, query: str) -> Generator[str, None, None]:
 @app.post("/api/query")
 def stream_query(req: QueryRequest):
     card_id = req.card_id
-    if not storage.is_indexed(card_id):
+    if not (qdrant_storage.is_indexed(card_id) or legacy_storage.is_indexed(card_id)):
         alt_id = REVERSE_ALIASES.get(card_id, CARD_ALIASES.get(card_id))
-        if alt_id and storage.is_indexed(alt_id):
+        if alt_id and (qdrant_storage.is_indexed(alt_id) or legacy_storage.is_indexed(alt_id)):
             card_id = alt_id
         else:
             index_card(card_id)
-            if not storage.is_indexed(card_id):
+            if not (qdrant_storage.is_indexed(card_id) or legacy_storage.is_indexed(card_id)):
                 card_id = CARD_ALIASES.get(card_id, card_id)
 
     return StreamingResponse(

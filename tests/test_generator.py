@@ -1,7 +1,26 @@
 from unittest.mock import MagicMock
-from src.parser import DocumentChunk
-from src.retriever import ScoredChunk
+from src.parser import DocumentChunk, ParentSection
+from src.retriever import ScoredChunk, RetrievedContext
 from src.generator import LLMGenerator, GroundedResponse
+
+def test_generator_builds_parent_context_prompt():
+    gen = LLMGenerator()
+    parent = ParentSection(
+        parent_id="p1", card_id="cibc_vip", card_name="CIBC VIP",
+        policy_name="Flight Delay", section_title="Benefits", page_start=35, page_end=36,
+        content="Flight delay pays up to $500 for hotel and food after 4 hours."
+    )
+    citation = {
+        "page_number": 36, "breadcrumb": "[CIBC] > [Flight Delay] (Page 36)",
+        "content": "Flight delay pays up to $500."
+    }
+    context = RetrievedContext(parents=[parent], citations=[citation])
+
+    prompt = gen._build_context_prompt("How much do I get for delayed flight?", context)
+    assert "--- Parent Section 1: [Flight Delay] > Benefits (Pages 35-36) ---" in prompt
+    assert "Flight delay pays up to $500 for hotel and food" in prompt
+    assert "USER QUESTION:" in prompt
+
 
 def test_generator_formats_prompt_and_parses_citations():
     mock_client = MagicMock()

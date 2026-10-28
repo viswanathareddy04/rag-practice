@@ -2,9 +2,10 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, Union
 import httpx
-from src.retriever import ScoredChunk
+
+from src.retriever import ScoredChunk, RetrievedContext
 
 SYSTEM_PROMPT = """You are an expert Credit Card Insurance Specialist. Your goal is to provide accurate, reliable, 
 and clear explanations of credit card insurance benefits strictly based on the provided certificate context.
@@ -42,26 +43,53 @@ class LLMGenerator:
         self.model = os.getenv("LLM_MODEL", model)
         self.base_url = os.getenv("OLLAMA_BASE_URL", base_url)
 
-    def _build_context_prompt(self, question: str, chunks: List[ScoredChunk]) -> str:
+    def _build_context_prompt(self, question: str, context_or_chunks: Union[RetrievedContext, List[ScoredChunk]]) -> str:
         context_blocks = []
-        for i, sc in enumerate(chunks):
-            c = sc.chunk
-            context_blocks.append(f"--- Context Block {i+1} ---\n{c.breadcrumb}\n{c.content}\n")
+
+        if isinstance(context_or_chunks, RetrievedContext):
+            for i, p in enumerate(context_or_chunks.parents):
+                page_str = f"Page {p.page_start}" if p.page_start == p.page_end else f"Pages {p.page_start}-{p.page_end}"
+                context_blocks.append(
+                    f"--- Parent Section {i+1}: [{p.policy_name}] > {p.section_title} ({page_str}) ---\n"
+                    f"{p.content}\n"
+                )
+        else:
+            for i, sc in enumerate(context_or_chunks):
+                c = sc.chunk
+                context_blocks.append(f"--- Context Block {i+1} ---\n{c.breadcrumb}\n{c.content}\n")
         
         context_text = "\n".join(context_blocks)
         return f"CONTEXT INFORMATION:\n{context_text}\n\nUSER QUESTION:\n{question}\n\nAnswer according to the rules and structure:"
 
-    def _format_fallback_response(self, question: str, chunks: List[ScoredChunk]) -> str:
-        return f"### Direct Answer\nBased on the certificate context retrieved for '{question}':\n\n" \
-               f"### Coverage Limits & Details\n" + \
-               "\n\n".join([f"- **{c.breadcrumb}**: {c.content}" for c in [sc.chunk for sc in chunks]]) + \
-               "\n\n### Key Conditions & Exclusions\nRefer to the specific certificate sections cited above.\n\n" \
-               "### Policy Citations\n" + \
-               "\n".join([f"- [{c.breadcrumb}]" for c in [sc.chunk for sc in chunks]])
+    def _format_fallback_response(self, question: str, context_or_chunks: Union[RetrievedContext, List[ScoredChunk]]) -> str:
+        if isinstance(context_or_chunks, RetrievedContext):
+            detail_lines = []
+            citation_lines = []
+            for p in context_or_chunks.parents:
+                page_str = f"Page {p.page_start}" if p.page_start == p.page_end else f"Pages {p.page_start}-{p.page_end}"
+                detail_lines.append(f"- **[{p.policy_name}] {p.section_title} ({page_str})**: {p.content[:300]}...")
+                citation_lines.append(f"- [{p.section_title}, {page_str}]")
 
-    def extract_citations(self, chunks: List[ScoredChunk]) -> List[Dict[str, Any]]:
+            return f"### Direct Answer\nBased on the certificate context retrieved for '{question}':\n\n" \
+                   f"### Coverage Limits & Details\n" + \
+                   "\n\n".join(detail_lines) + \
+                   "\n\n### Key Conditions & Exclusions\nRefer to the specific certificate sections cited above.\n\n" \
+                   "### Policy Citations\n" + \
+                   "\n".join(citation_lines)
+        else:
+            return f"### Direct Answer\nBased on the certificate context retrieved for '{question}':\n\n" \
+                   f"### Coverage Limits & Details\n" + \
+                   "\n\n".join([f"- **{c.breadcrumb}**: {c.content}" for c in [sc.chunk for sc in context_or_chunks]]) + \
+                   "\n\n### Key Conditions & Exclusions\nRefer to the specific certificate sections cited above.\n\n" \
+                   "### Policy Citations\n" + \
+                   "\n".join([f"- [{c.breadcrumb}]" for c in [sc.chunk for sc in context_or_chunks]])
+
+    def extract_citations(self, context_or_chunks: Union[RetrievedContext, List[ScoredChunk]]) -> List[Dict[str, Any]]:
+        if isinstance(context_or_chunks, RetrievedContext):
+            return context_or_chunks.citations
+
         citations = []
-        for sc in chunks:
+        for sc in context_or_chunks:
             c = sc.chunk
             citations.append({
                 "page_number": c.page_number,
@@ -71,9 +99,9 @@ class LLMGenerator:
             })
         return citations
 
-    def generate_stream(self, question: str, chunks: List[ScoredChunk]) -> Generator[str, None, None]:
+    def generate_stream(self, question: str, context_or_chunks: Union[RetrievedContext, List[ScoredChunk]]) -> Generator[str, None, None]:
         """Yields streaming tokens as they are generated by the model."""
-        user_prompt = self._build_context_prompt(question, chunks)
+        user_prompt = self._build_context_prompt(question, context_or_chunks)
 
         if self.ollama_client:
             res = self.ollama_client.chat(model=self.model, messages=[
@@ -106,12 +134,12 @@ class LLMGenerator:
                     if content:
                         yield content
         except Exception:
-            fallback_text = self._format_fallback_response(question, chunks)
+            fallback_text = self._format_fallback_response(question, context_or_chunks)
             yield fallback_text
 
-    def generate(self, question: str, chunks: List[ScoredChunk]) -> GroundedResponse:
-        user_prompt = self._build_context_prompt(question, chunks)
-        citations = self.extract_citations(chunks)
+    def generate(self, question: str, context_or_chunks: Union[RetrievedContext, List[ScoredChunk]]) -> GroundedResponse:
+        user_prompt = self._build_context_prompt(question, context_or_chunks)
+        citations = self.extract_citations(context_or_chunks)
 
         if self.ollama_client:
             res = self.ollama_client.chat(model=self.model, messages=[
@@ -135,7 +163,7 @@ class LLMGenerator:
                 data = response.json()
                 answer_text = data["message"]["content"]
             except Exception:
-                answer_text = self._format_fallback_response(question, chunks)
+                answer_text = self._format_fallback_response(question, context_or_chunks)
 
         return GroundedResponse(
             question=question,
