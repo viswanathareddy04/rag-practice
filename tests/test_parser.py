@@ -1,4 +1,55 @@
-from src.parser import InsuranceDocParser, DocumentChunk
+from src.parser import InsuranceDocParser, DocumentChunk, ParentSection, ChildChunk
+
+def test_parser_creates_parent_sections_and_children():
+    parser = InsuranceDocParser()
+    sample_md = """<!-- Page 1 -->
+# TRAVEL MEDICAL INSURANCE
+## CERTIFICATE OF INSURANCE
+Introduction to the medical policy.
+
+### SECTION 1 - SUMMARY OF BENEFITS
+| Coverage | Maximum |
+| Travel Medical | $5,000,000 |
+| Trip Cancellation | $2,500 |
+
+### SECTION 2 - LIMITATIONS AND EXCLUSIONS
+This policy excludes pre-existing medical conditions that were not stable in the 90 days prior to departure. Stability means no new symptoms, no hospitalizations, and no change in medication or dosage.
+Exclusion clause 2: Travelling against medical advice is not covered under any circumstances.
+"""
+    parents, children = parser.parse_markdown_text(
+        sample_md, card_name="CIBC Aeroplan VIP", card_id="cibc_aeroplan_vip"
+    )
+
+    assert len(parents) >= 2
+    assert all(isinstance(p, ParentSection) for p in parents)
+    assert all(isinstance(c, ChildChunk) for c in children)
+
+    # Check parent structure
+    sec2 = next(p for p in parents if "LIMITATIONS AND EXCLUSIONS" in p.section_title)
+    assert sec2.policy_name == "TRAVEL MEDICAL INSURANCE"
+    assert "90 days prior to departure" in sec2.content
+
+    # Check child structure and linking
+    c_sec2 = [c for c in children if c.parent_id == sec2.parent_id]
+    assert len(c_sec2) >= 1
+    assert c_sec2[0].parent_content == sec2.content
+    assert "[Card: CIBC Aeroplan VIP]" in c_sec2[0].breadcrumb
+
+def test_parser_preserves_table_rows_intact():
+    parser = InsuranceDocParser()
+    sample_md = """<!-- Page 2 -->
+### SUMMARY OF BENEFITS
+| BENEFIT | LIMIT |
+| Flight Delay | $500 per person |
+| Baggage Delay | $1,000 per person |
+"""
+    parents, children = parser.parse_markdown_text(
+        sample_md, card_name="TD Aeroplan VIP", card_id="td_aeroplan_vip"
+    )
+    table_children = [c for c in children if "|" in c.content]
+    assert len(table_children) >= 1
+    for tc in table_children:
+        assert tc.content.count("|") >= 2
 
 def test_parser_creates_breadcrumbed_chunks():
     parser = InsuranceDocParser(chunk_size=300, chunk_overlap=50)
