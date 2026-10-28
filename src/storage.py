@@ -1,13 +1,19 @@
 import json
+import os
 import pickle
 import re
+import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import numpy as np
+import torch
+from qdrant_client import QdrantClient, models
 from rank_bm25 import BM25Plus
 from sentence_transformers import SentenceTransformer
-from src.parser import DocumentChunk
+
+from src.parser import DocumentChunk, ParentSection, ChildChunk
+from src.bm25_vectorizer import BM25Vectorizer
 
 @dataclass
 class CardIndexData:
@@ -15,6 +21,135 @@ class CardIndexData:
     chunks: List[DocumentChunk]
     bm25: BM25Plus
     embeddings: np.ndarray
+
+class QdrantStorageManager:
+    """Manages cloud/local Qdrant vector storage with named dense & BM25 sparse vectors."""
+
+    COLLECTION_NAME = "insurance_chunks"
+
+    def __init__(self, client: Optional[QdrantClient] = None, url: Optional[str] = None,
+                 api_key: Optional[str] = None, model_name: str = "BAAI/bge-base-en-v1.5",
+                 device: str = "auto"):
+        self.model_name = os.getenv("EMBEDDING_MODEL", model_name)
+        
+        # Resolve compute device
+        if device == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+
+        self._embedder: Optional[SentenceTransformer] = None
+        self.bm25_vectorizer = BM25Vectorizer()
+
+        # Resolve Qdrant client
+        if client is not None:
+            self.client = client
+        else:
+            q_url = url or os.getenv("QDRANT_URL")
+            q_api_key = api_key or os.getenv("QDRANT_API_KEY")
+
+            if q_url and q_api_key:
+                self.client = QdrantClient(url=q_url, api_key=q_api_key)
+            elif os.getenv("QDRANT_LOCAL", "").lower() in ("true", "1"):
+                self.client = QdrantClient(path="./.index/qdrant")
+            else:
+                self.client = QdrantClient(location=":memory:")
+
+    @property
+    def embedder(self) -> SentenceTransformer:
+        if self._embedder is None:
+            self._embedder = SentenceTransformer(self.model_name, device=self.device)
+        return self._embedder
+
+    def create_collection_if_not_exists(self):
+        """Creates the insurance_chunks collection with named dense + sparse vectors and card_id payload index."""
+        collections = self.client.get_collections().collections
+        existing_names = [c.name for c in collections]
+
+        if self.COLLECTION_NAME not in existing_names:
+            dim = self.embedder.get_sentence_embedding_dimension()
+            self.client.create_collection(
+                collection_name=self.COLLECTION_NAME,
+                vectors_config={
+                    "dense": models.VectorParams(size=dim, distance=models.Distance.COSINE)
+                },
+                sparse_vectors_config={
+                    "bm25": models.SparseVectorParams()
+                }
+            )
+            # Create payload index on card_id for fast pre-filtering across 20-30 cards
+            self.client.create_payload_index(
+                collection_name=self.COLLECTION_NAME,
+                field_name="card_id",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+
+    def is_indexed(self, card_id: str) -> bool:
+        """Returns True if at least one chunk exists for card_id in the collection."""
+        collections = self.client.get_collections().collections
+        if self.COLLECTION_NAME not in [c.name for c in collections]:
+            return False
+
+        res = self.client.count(
+            collection_name=self.COLLECTION_NAME,
+            count_filter=models.Filter(
+                must=[models.FieldCondition(key="card_id", match=models.MatchValue(value=card_id))]
+            )
+        )
+        return res.count > 0
+
+    def save_card_chunks(self, card_id: str, parent_sections: List[ParentSection], child_chunks: List[ChildChunk]):
+        """Idempotently saves ChildChunks and their ParentSections to Qdrant Cloud."""
+        self.create_collection_if_not_exists()
+
+        # 1. Idempotent deletion: remove any existing points for this card
+        self.client.delete(
+            collection_name=self.COLLECTION_NAME,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[models.FieldCondition(key="card_id", match=models.MatchValue(value=card_id))]
+                )
+            )
+        )
+
+        if not child_chunks:
+            return
+
+        # 2. Fit BM25 vectorizer on the card's child corpus
+        child_texts = [c.content for c in child_chunks]
+        self.bm25_vectorizer.fit(child_texts)
+
+        # 3. Dense embeddings
+        dense_embeddings = self.embedder.encode(child_texts, convert_to_numpy=True, normalize_embeddings=True)
+
+        # 4. Assemble points
+        points: List[models.PointStruct] = []
+        for i, c in enumerate(child_chunks):
+            # Deterministic UUID from child_id
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, c.child_id))
+            dense_vec = dense_embeddings[i].tolist()
+            sparse_vec = self.bm25_vectorizer.encode_document(c.content)
+
+            payload = asdict(c)
+            # Ensure bank metadata is present
+            if "bank" not in payload:
+                payload["bank"] = card_id.split("_")[0] if "_" in card_id else "unknown"
+
+            points.append(models.PointStruct(
+                id=point_id,
+                vector={
+                    "dense": dense_vec,
+                    "bm25": sparse_vec
+                },
+                payload=payload
+            ))
+
+        # 5. Batch upsert into Qdrant
+        batch_size = 100
+        for i in range(0, len(points), batch_size):
+            batch = points[i:i + batch_size]
+            self.client.upsert(collection_name=self.COLLECTION_NAME, points=batch)
+
 
 class StorageManager:
     """Manages persistence of chunks, BM25 indices, and dense embeddings per credit card."""
