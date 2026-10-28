@@ -80,14 +80,26 @@ flowchart TD
 
 ---
 
-## 3. Quick Start & Execution Guide
+## 3. Phase Status Overview
 
-### 3.1 Prerequisites
+| Phase | Title & Focus Area | Deliverables & Core Technologies | Status | Verification & Benchmarks | Detailed Guide |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Phase 1** | **Ingestion & Universal Layout Parsing** | `src/registry.py`, `src/parser.py`, `data/extracted/*.md`<br>*(PyMuPDF, pymupdf4llm, Unicode normalizer)* | **COMPLETE (100%)** ✅ | 6/6 tests passing. All 10 TD baseline policies verified without bank regex. | [Phase 1 Guide](docs/phases/PHASE_1_INGESTION.md) |
+| **Phase 2** | **Hybrid Retrieval & Benchmark Baseline** | `src/storage.py` (Local fallback), `src/retriever.py`, local RRF fusion ($k=60$)<br>*(BM25Plus, sentence-transformers/all-MiniLM-L6-v2)* | **COMPLETE (100%)** ✅ | 10/10 TD benchmark tests passing (`tests/test_benchmark_td.py`). Stopword pruning and exact number matching. | [Phase 2 Guide](docs/phases/PHASE_2_RETRIEVAL.md) |
+| **Phase 3** | **Grounded Synthesis & Citation Guardrails** | `src/generator.py`, `scripts/query.py`, `scripts/eval_synthesis.py`<br>*(qwen2.5:7b via local Ollama, 4-part response schema)* | **COMPLETE (100%)** ✅ | 4/4 generator tests passing. 5/5 synthesis evaluation cases pass with 100% negative rejection. | [Phase 3 Guide](docs/phases/PHASE_3_SYNTHESIS.md) |
+| **Phase 4** | **Full-Stack Web App & Multi-Bank Verification** | `api/main.py`, `frontend/` (Dark Fintech UI), `tests/test_multibank.py`<br>*(FastAPI, Uvicorn, SSE streaming, Vanilla HTML5/CSS3/ES6)* | **COMPLETE (100%)** ✅ | 4/4 API tests + 3/3 multi-bank tests passing (`tests/test_api.py`, `tests/test_multibank.py`). Zero build step. | [Phase 4 Guide](docs/phases/PHASE_4_FULLSTACK_UI.md) |
+| **Phase 5** | **Parent-Document Retrieval & Qdrant Cloud Hybrid** | `src/bm25_vectorizer.py`, `src/storage.py` (`QdrantStorageManager`), `src/retriever.py` (`HybridParentRetriever`), `scripts/index_all_cards.py`<br>*(Qdrant Cloud, BAAI/bge-base-en-v1.5 768-d on GPU, server-side RRF)* | **COMPLETE (100%)** ✅ | **37/37 tests passing** in full test suite. CIBC (`$100,000` MSRP, medical duration) & TD benchmarks verified. | [Phase 5 Guide](docs/phases/PHASE_5_PARENT_DOCUMENT_QDRANT.md) |
+
+---
+
+## 4. Quick Start & Execution Guide
+
+### 4.1 Prerequisites
 - Python 3.12+ (tested on Python 3.13)
 - [Ollama](https://ollama.com/) running locally with model: `ollama pull qwen2.5:7b`
 - Qdrant Cloud account & API Key (or local in-memory fallback)
 
-### 3.2 Environment Configuration
+### 4.2 Environment Configuration
 Copy `.env.example` to `.env` and fill in your Qdrant Cloud credentials:
 ```powershell
 cp .env.example .env
@@ -103,7 +115,7 @@ LLM_MODEL=qwen2.5:7b
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-### 3.3 Index All Insurance Booklets
+### 4.3 Index All Insurance Booklets
 Run the automated cloud ingestion script:
 ```powershell
 # Index all cards in data/ to Qdrant Cloud
@@ -114,20 +126,20 @@ python scripts/index_all_cards.py --card td_aeroplan_vip
 python scripts/index_all_cards.py --card cibc_aeroplan_vip
 ```
 
-### 3.4 Launch the Web Application
+### 4.4 Launch the Web Application
 Start the FastAPI server:
 ```powershell
 python -m uvicorn api.main:app --reload --port 8001
 ```
 Open your browser at: **`http://localhost:8001/`**
 
-### 3.5 Run the Interactive CLI Query Tool
+### 4.5 Run the Interactive CLI Query Tool
 Test questions directly in the terminal with live streaming:
 ```powershell
 python scripts/query.py --card td_aeroplan_vip "What is the maximum MSRP for rental car collision coverage?"
 ```
 
-### 3.6 Run the Automated Test Suite
+### 4.6 Run the Automated Test Suite
 Run all 37 unit, integration, and benchmark tests:
 ```powershell
 pytest tests/ -v
@@ -135,7 +147,7 @@ pytest tests/ -v
 
 ---
 
-## 4. Repository Structure
+## 5. Repository Structure
 
 ```text
 rag-practice/
@@ -183,7 +195,7 @@ rag-practice/
 
 ---
 
-## 5. Architectural Comparison: Legacy vs Current
+## 6. Architectural Comparison: Legacy vs Current
 
 | Capability | Legacy Approach (Phase 1–4) | Current Parent-Document Architecture (Phase 5) |
 | :--- | :--- | :--- |
@@ -199,7 +211,7 @@ rag-practice/
 
 ---
 
-## 6. Testing & Verification
+## 7. Testing & Verification
 
 The repository enforces strict continuous verification:
 ```powershell
@@ -221,7 +233,7 @@ All 37 test cases validate:
 
 ---
 
-## 7. Documentation Index
+## 8. Documentation Index
 
 * **[Architecture & Technical Deep-Dive](docs/ARCHITECTURE_AND_TECHNICAL_REFERENCE.md)**: Exhaustive manual covering algorithmic trade-offs, edge cases, file-by-file walkthrough, and a plain-English beginner's guide to RAG.
 * **[Development Roadmap](docs/ROADMAP.md)**: Current status of all 5 project phases.

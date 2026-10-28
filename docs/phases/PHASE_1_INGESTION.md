@@ -6,6 +6,9 @@
 
 ---
 
+> [!NOTE]
+> **Phase 5 Evolution**: In Phase 5, the layout parser in [`src/parser.py`](file:///d:/rag-practice/src/parser.py) was enhanced with `parse_pdf_parent_child()` to split continuous Markdown into two-tier `ParentSection` (~600–1,500 words) and `ChildChunk` (~80–150 words) objects, preserving Markdown tables intact without cell severance. See [Phase 5 Guide](PHASE_5_PARENT_DOCUMENT_QDRANT.md).
+
 ## 1. Objectives & Architectural Goal
 
 The goal of Phase 1 is to convert heterogeneous, unstructured credit card insurance booklets (typically 20–60 page PDFs) into clean, structured Markdown chunks tagged with **contextual hierarchical breadcrumbs**:
