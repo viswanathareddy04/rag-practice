@@ -123,92 +123,102 @@ flowchart TD
 
 ---
 
-### 5.2 `src/parser.py` — Layout-Aware Hierarchical Breadcrumb Parser
-**Purpose**: Ingests complex multi-page insurance PDFs, tracks document outline hierarchies, parses markdown layout and tables, and outputs chunks prepended with full breadcrumbs.
+### 5.2 `src/parser.py` — Universal Parent-Document Layout Parser
+**Purpose**: Universally parses multi-page insurance PDFs and Markdown into two-tier `ParentSection` (~600–1,500 words) and `ChildChunk` (~80–150 words) structures using document typography (`#`, `##`, `###`, tables `|`) with line-by-line physical page tracking.
 
-- **Class: `DocumentChunk`**
+- **Class: `ParentSection`**
+  - Attributes: `parent_id` (str), `card_id` (str), `card_name` (str), `policy_name` (str), `section_title` (str), `page_start` (int), `page_end` (int), `content` (str).
+- **Class: `ChildChunk`**
+  - Attributes: `child_id` (str), `parent_id` (str), `card_id` (str), `card_name` (str), `policy_name` (str), `section_title` (str), `page_number` (int), `content` (str), `breadcrumb` (str), `parent_content` (str).
+- **Class: `DocumentChunk`** (Legacy)
   - Attributes: `chunk_id` (str), `card_name` (str), `breadcrumb` (str), `page_number` (int), `content` (str), `full_text_with_context` (str).
 
 - **Class: `InsuranceDocParser`**
   - `__init__(self, chunk_size: int = 400, chunk_overlap: int = 80)`: Configures text chunking boundaries and overlap windows.
-  - `_normalize_unicode(self, text: str) -> str`: Normalizes non-breaking hyphens (`\u2011`), curly quotes, and non-breaking spaces.
-  - `_clean_heading(self, heading: str) -> str`: Strips markdown header tags (`#`, `##`, `###`), page artifacts, and whitespace.
-  - `_is_policy_title(self, line: str) -> bool`: Heuristic identifying whether a heading denotes a Level-1 insurance policy (e.g. *Travel Medical Insurance*, *Flight Delay Insurance*).
-  - `_extract_document_toc(self, doc: fitz.Document) -> List[Dict]`: Extracts the native PDF bookmark tree (`doc.get_toc()`), resolving title, level, and 1-indexed page number.
-  - `_split_markdown_into_sections(self, md_text: str, current_policy: str, current_section: str, page_num: int) -> List[Tuple]`: Analyzes markdown line-by-line on a page, identifying `#`, `##`, `###`, and `Section X - ...` patterns to handle mid-page section transitions without inheriting previous policies across page boundaries.
-  - `_chunk_section_text(self, text: str) -> List[str]`: Splits section body text into overlapping word windows respecting `chunk_size` and `chunk_overlap`.
-  - `parse_pdf(self, pdf_path: str, card_name: str, card_id: Optional[str] = None, extract_dir: Optional[Path] = None) -> List[DocumentChunk]`: Master execution method:
-    1. Opens document with `fitz.open()`.
-    2. Builds page-to-TOC lookup maps.
-    3. Runs `pymupdf4llm.to_markdown(doc, page_chunks=True)` to extract structured markdown per page.
-    4. Optionally saves continuous markdown to `data/extracted/{card_id}.md` for verification.
-    5. Iterates through pages, tracks policy and section state, chunks content, prepends breadcrumbs (`[Card] > [Policy] > [Section] (Page X)`), and returns all chunks.
+  - `parse_pdf_parent_child(self, pdf_path: str, card_name: str, card_id: Optional[str] = None, extract_dir: Optional[str] = "data/extracted") -> Tuple[List[ParentSection], List[ChildChunk]]`:
+    Primary ingestion method: runs `pymupdf4llm.to_markdown(doc, page_chunks=True)`, embeds physical page comments (`<!-- Page X -->`), exports standardized continuous Markdown to `data/extracted/<card_id>.md`, and delegates to `parse_markdown_text()`.
+  - `parse_markdown_text(self, markdown_text: str, card_name: str, card_id: str) -> Tuple[List[ParentSection], List[ChildChunk]]`:
+    Parses continuous Markdown line-by-line. Tracks active policy and section headers (`#`, `##`, `###`, `Section \d+ - ...`), tracks physical page numbers via `<!-- Page X -->`, flushes completed parent sections, and generates linked child chunks.
+  - `_chunk_parent_section(self, parent: ParentSection, lines: List[str], page_map: Dict[int, int], default_page: int) -> List[ChildChunk]`:
+    Splits a parent section into ~80–150 word child chunks. Detects Markdown tables and preserves them intact (or groups larger tables in 3-row cluster blocks with repeated headers). Text blocks are split along paragraph (`\n\n`) and sentence boundaries.
+  - `parse_pdf(self, pdf_path: str, card_name: str, card_id: Optional[str] = None, extract_dir: Optional[str] = "data/extracted") -> List[DocumentChunk]`:
+    Legacy-compatible method building flat `DocumentChunk` objects for local disk fallback.
 
 ---
 
-### 5.3 `src/storage.py` — Dual-Artifact Local Vector & Lexical Persistence
-**Purpose**: Manages on-disk caching and instant deserialization of chunks, BM25Plus models, and normalized NumPy embedding matrices.
+### 5.3 `src/bm25_vectorizer.py` — Cloud-Native BM25 Sparse Vectorizer
+**Purpose**: Converts raw text and natural language queries into cloud-native sparse vector representations (`models.SparseVector(indices=..., values=...)`) for native ingestion and lexical retrieval in Qdrant Cloud.
 
-- **Class: `CardIndexData`**
-  - Attributes: `card_id` (str), `chunks` (List[DocumentChunk]), `bm25` (BM25Plus), `embeddings` (np.ndarray).
-
-- **Class: `StorageManager`**
-  - `__init__(self, storage_dir: Path, model_name: str = "sentence-transformers/all-MiniLM-L6-v2")`: Sets directory `.index/` and dense model name.
-  - `embedder` (property): Lazy-loads `SentenceTransformer` on first access to prevent slow startup times when only reading metadata.
-  - `_get_card_dir(self, card_id: str) -> Path`: Returns `.index/{card_id}`.
-  - `is_indexed(self, card_id: str) -> bool`: Checks if `chunks.json`, `bm25.pkl`, and `embeddings.npy` all exist on disk.
-  - `save_card_index(self, card_id: str, chunks: List[DocumentChunk])`:
-    1. Writes chunks as JSON to `.index/{card_id}/chunks.json`.
-    2. Tokenizes `full_text_with_context` for each chunk, fits `BM25Plus`, and pickles to `bm25.pkl`.
-    3. Computes dense embeddings with `self.embedder.encode(..., normalize_embeddings=True)` and writes float32 matrix to `embeddings.npy`.
-  - `load_card_index(self, card_id: str) -> CardIndexData`: Loads JSON chunks, unpickles BM25Plus, and memory-maps `embeddings.npy` in <2 milliseconds.
+- **Class: `BM25SparseVectorizer`**
+  - `__init__(self, avg_doc_len: float = 120.0, k1: float = 1.5, b: float = 0.75)`: Initializes BM25 scoring parameters and question stopword dictionary.
+  - `tokenize(self, text: str) -> List[str]`: Normalizes Unicode characters and extracts clean lowercase alphanumeric tokens.
+  - `encode_text(self, text: str) -> models.SparseVector`: Computes BM25 term frequency weights and maps tokens into consistent 32-bit hash indices for Qdrant point storage.
+  - `encode_query(self, query: str) -> models.SparseVector`: Encodes search queries, automatically pruning 30+ question stopwords (*what, is, the, for, does, how, much, can, i, my*) so rare terms like `$85,000`, `MSRP`, `deductible`, `pre-existing` dominate the sparse vector.
 
 ---
 
-### 5.4 `src/retriever.py` — Hybrid Dual-Index RRF Retriever
-**Purpose**: Executes simultaneous lexical and dense retrieval and fuses them using Reciprocal Rank Fusion with question stopword suppression.
+### 5.4 `src/storage.py` — Dual-Vector Cloud & Local Storage Managers
+**Purpose**: Manages cloud collection initialization, dual-vector upserts (`dense` + `bm25`), payload indexing, and denormalized parent content in Qdrant Cloud, with automatic local fallback.
 
-- **Class: `ScoredChunk`**
+- **Class: `QdrantStorageManager`** (Primary Cloud Storage Engine)
+  - `COLLECTION_NAME = "insurance_chunks"`
+  - `__init__(self, client: Optional[QdrantClient] = None, collection_name: str = "insurance_chunks", device: Optional[str] = None)`: Connects to Qdrant Cloud cluster via `QDRANT_URL` and `QDRANT_API_KEY`, or falls back to in-memory `:memory:` for testing. Initializes `BAAI/bge-base-en-v1.5` (768-d) on CUDA GPU.
+  - `create_collection_if_not_exists(self)`: Configures collection with named vectors (`dense`: 768-d Cosine; `bm25`: Sparse dot-product) and creates a payload keyword index on `card_id`.
+  - `save_card_chunks(self, card_id: str, parents: List[ParentSection], children: List[ChildChunk])`: Generates dense embeddings and BM25 sparse vectors for all child chunks, attaches full denormalized `parent_content` to payloads, and batch-upserts points (batch size 64) with exponential retry.
+  - `is_indexed(self, card_id: str) -> bool`: Verifies whether child points for `card_id` exist in Qdrant.
+
+- **Class: `StorageManager`** (Legacy Local Disk Fallback)
+  - `__init__(self, storage_dir: Path, model_name: str = "sentence-transformers/all-MiniLM-L6-v2")`: Manages `.index/<card_id>/` disk artifacts (`chunks.json`, `bm25.pkl`, `embeddings.npy`).
+  - `save_card_index(self, card_id: str, chunks: List[DocumentChunk])`: Fits local `BM25Plus`, encodes 384-d MiniLM vectors, and saves to disk.
+  - `load_card_index(self, card_id: str) -> CardIndexData`: Fast deserialization from disk.
+
+---
+
+### 5.5 `src/retriever.py` — Hybrid Cloud Retriever & Server-Side RRF
+**Purpose**: Executes simultaneous dense semantic and BM25 lexical search in Qdrant Cloud in a single network request using server-side Reciprocal Rank Fusion ($k=60$), followed by parent deduplication.
+
+- **Class: `RetrievedContext`**
+  - Attributes: `parents` (List[ParentSection]), `citations` (List[Dict[str, Any]]).
+- **Class: `ScoredChunk`** (Legacy)
   - Attributes: `chunk` (DocumentChunk), `score` (float), `retrieval_method` (str).
 
-- **Class: `HybridRetriever`**
-  - `__init__(self, storage_manager: StorageManager, rrf_k: int = 60)`: Initializes storage manager and standard RRF constant ($k=60$).
-  - `_filter_stopwords(self, query: str) -> List[str]`: Removes 30+ question filler words (*what, is, the, for, does, how, much, can, i, my, am*) while preserving specific insurance terms (*delay, msrp, deductible, 85,000*).
-  - `retrieve(self, card_id: str, query: str, top_k: int = 8) -> List[ScoredChunk]`:
-    1. Loads index via `storage_manager.load_card_index(card_id)`.
-    2. **BM25 Scoring**: Evaluates tokenized query against `bm25.get_scores()`, ranks chunks by lexical score.
-    3. **Dense Scoring**: Encodes query to 384-d normalized vector, computes dot-product cosine similarity against `embeddings.npy`, ranks chunks by dense score.
-    4. **RRF Merge**: For each chunk $c$, computes:
-       $$RRF(c) = \frac{1}{k + rank_{BM25}(c)} + \frac{1}{k + rank_{Dense}(c)}$$
-    5. Sorts chunks by $RRF(c)$ descending and returns top `top_k` ScoredChunk objects.
+- **Class: `HybridParentRetriever`** (Primary Cloud Retriever)
+  - `__init__(self, storage_manager: QdrantStorageManager, rrf_k: int = 60)`: Initializes Qdrant storage manager and RRF constant.
+  - `retrieve(self, card_id: str, query: str, top_k_parents: int = 3, top_k_children: int = 8) -> RetrievedContext`:
+    1. Encodes query into dense 768-d vector and sparse BM25 vector.
+    2. Calls `client.query_points()` with `card_id` filter and server-side RRF prefetch fusion ($k=60$).
+    3. Receives top child hits with exact `page_number` and `breadcrumb` for citations.
+    4. Deduplicates child hits by `parent_id` to extract top 2–3 unique parent sections (~1,500–2,500 words) for complete legal context.
+    5. Returns `RetrievedContext` containing parents and structured citations.
+
+- **Class: `HybridRetriever`** (Legacy Local Disk Retriever)
+  - `retrieve(self, card_id: str, query: str, top_k: int = 8) -> List[ScoredChunk]`: Python-side RRF fusion over local NumPy dot-products and pickled BM25 scores.
 
 ---
 
-### 5.5 `src/generator.py` — Grounded LLM Generator & Citation Guardrails
-**Purpose**: Connects to local Ollama (`qwen2.5:7b`), builds grounded context prompts, enforces the 4-part response schema, and provides real-time streaming and offline fallback.
+### 5.6 `src/generator.py` — Grounded LLM Generator & Citation Guardrails
+**Purpose**: Connects to local Ollama (`qwen2.5:7b`), formats complete parent sections into grounded context prompts, enforces the 4-part response schema, and provides real-time SSE streaming.
 
 - **Class: `GroundedResponse`**
   - Attributes: `question` (str), `answer_markdown` (str), `citations` (List[Dict[str, Any]]).
 
 - **Class: `LLMGenerator`**
-  - `__init__(self, ollama_client: Optional[Any] = None, model: str = "qwen2.5:7b", base_url: str = "http://localhost:11434")`: Configures local Ollama endpoint and model.
-  - `_build_context_prompt(self, question: str, chunks: List[ScoredChunk]) -> str`: Formats numbered context blocks with full breadcrumbs and appends the user question.
-  - `_format_fallback_response(self, question: str, chunks: List[ScoredChunk]) -> str`: Deterministic offline fallback rendering 4-part markdown directly from retrieved chunks if the LLM daemon is offline.
+  - `__init__(self, ollama_client: Optional[Any] = None, model: str = "qwen2.5:7b", base_url: str = "http://localhost:11434")`: Configures Ollama client and model.
+  - `_build_context_prompt(self, question: str, context: Union[RetrievedContext, List[ScoredChunk]]) -> str`: Formats complete parent sections into numbered context blocks with full policy and section headings.
+  - `generate_stream(self, question: str, context: Union[RetrievedContext, List[ScoredChunk]]) -> Generator[str, None, None]`: Streams tokens line-by-line from `POST {base_url}/api/chat` using `httpx.stream`, falling back to offline generator if unreachable.
   - `extract_citations(self, chunks: List[ScoredChunk]) -> List[Dict[str, Any]]`: Parses chunks into structured citation dicts (`page_number`, `breadcrumb`, `snippet`, `score`).
-  - `generate_stream(self, question: str, chunks: List[ScoredChunk]) -> Generator[str, None, None]`: Streams tokens line-by-line from `POST {base_url}/api/chat` using `httpx.stream`, falling back to offline generator if unreachable.
-  - `generate(self, question: str, chunks: List[ScoredChunk]) -> GroundedResponse`: Synchronous generation method returning full response object.
 
 ---
 
-### 5.6 `api/main.py` — FastAPI Backend Microservice
+### 5.7 `api/main.py` — FastAPI Backend Microservice
 **Purpose**: REST API & Server-Sent Events service that binds the core engine with the static web frontend without CORS friction.
 
 - **`CARD_ALIASES` & `REVERSE_ALIASES`**: Bidirectional mapping between filename slugs (`td_aeroplan_visa_infinite_privilege_card_coi`) and benchmark IDs (`td_aeroplan_vip`).
-- **`GET /api/status`**: Returns API health, active LLM model, Ollama endpoint, and list of indexed card IDs.
-- **`GET /api/cards`**: Discovers cards via `CardRegistry.scan()`, checks indexing status in `StorageManager`, and returns cards with chunk counts.
-- **`POST /api/index/{card_id}`**: On-demand indexing endpoint that invokes `InsuranceDocParser.parse_pdf()` and saves `.index/{card_id}` artifacts.
+- **`GET /api/status`**: Returns API health, active LLM model, Ollama endpoint, Qdrant collection name, and list of indexed card IDs.
+- **`GET /api/cards`**: Discovers cards via `CardRegistry.scan()`, checks indexing status in `QdrantStorageManager` (and legacy storage), and returns card metadata.
+- **`POST /api/index/{card_id}`**: On-demand indexing endpoint that parses PDFs into parent sections & child chunks and upserts them to Qdrant Cloud.
 - **`sse_event_generator(card_id: str, query: str)`**: Async/synchronous generator yielding four discrete SSE events:
-  - `event: context` $\rightarrow$ JSON array of top-8 retrieved chunks.
+  - `event: context` $\rightarrow$ JSON array of top child chunks (rank, page_number, breadcrumb, snippet, score).
   - `event: token` $\rightarrow$ Individual token string generated by the LLM.
   - `event: citations` $\rightarrow$ JSON array of structured page citations.
   - `event: done` $\rightarrow$ Latency metrics (`{"elapsed_ms": float}`).
@@ -217,7 +227,7 @@ flowchart TD
 
 ---
 
-### 5.7 `frontend/` — Dark Fintech User Interface
+### 5.8 `frontend/` — Dark Fintech User Interface
 **Purpose**: High-aesthetic, responsive, client-side application built with pure web standards.
 
 - **`frontend/index.html`**:
@@ -230,51 +240,63 @@ flowchart TD
   - Glassmorphic backdrop blur (`16px`), animated streaming pulse dots, and responsive breakpoints.
 - **`frontend/app.js`**:
   - `fetchCards()`, `fetchStatus()`, `updateCardDisplay()`.
-  - Chip click handler: Populates `#queryInput` and focuses without auto-submitting, allowing user edits.
   - `executeStreamQuery(query)`: Uses native `fetch` + `ReadableStreamDefaultReader` + `TextDecoder` to parse `event: context`, `event: token`, and `event: done`.
   - `renderGroundingSources()`: Renders citation cards with rank, page badge, score, breadcrumb, and expandable "View Full Section ▾" accordions.
-  - `renderMarkdown()`: Lightweight regex-based markdown parser rendering headers, bolding, lists, and citation tag pills.
 
 ---
 
-### 5.8 `tests/` — Automated Quality & Benchmark Suites
-- **`tests/test_parser.py`**: Verifies breadcrumb generation, multi-section page transitions, policy boundary isolation, and markdown export.
-- **`tests/test_registry.py`**: Verifies dynamic discovery of bank folders, card slugs, and display names.
-- **`tests/test_storage.py`**: Verifies persistence and loading of JSON chunks, BM25 models, and float32 embedding matrices.
-- **`tests/test_retriever.py`**: Verifies exact lexical and semantic ranking in hybrid retrieval.
-- **`tests/test_generator.py`**: Verifies structured prompt formatting, token streaming, and offline fallback.
-- **`tests/test_api.py`**: Verifies `/api/status`, `/api/cards`, `/api/query` streaming, and static frontend mounting.
-- **`tests/test_benchmark_td.py`**: 10-question ground truth benchmark suite covering flight delay, medical stability, rental car MSRP, baggage delay, mobile device deductibles, and pet rejection. 100% precision.
-- **`tests/test_multibank.py`**: Cross-bank test suite asserting discovery and retrieval on CIBC Aeroplan VIP and Scotiabank Passport VIP certificates.
+### 5.9 `tests/` — Automated Quality & Benchmark Suites (37 Tests)
+- **`tests/test_benchmark_cibc.py`** (3 tests): Validates CIBC Aeroplan VIP `$100,000` MSRP auto rental limit, age-tiered medical durations (31 days under 65 vs 10 days 65+), and pet rejection.
+- **`tests/test_benchmark_td.py`** (10 tests): 10-question ground truth benchmark suite covering flight delay, medical stability, rental car MSRP, baggage delay, mobile device deductibles, and pet rejection. 100% precision.
+- **`tests/test_parser.py`** (6 tests): Verifies parent sections, child chunks, table row preservation, breadcrumbs, multi-section page transitions, policy boundaries, and markdown export.
+- **`tests/test_bm25_vectorizer.py`** (2 tests): Verifies sparse vector generation, token frequency hashing, and query stopword pruning.
+- **`tests/test_storage_qdrant.py`** (1 test): Verifies Qdrant collection creation, named vector upsert, and payload filtering.
+- **`tests/test_retriever.py`** (2 tests): Verifies Qdrant hybrid RRF fusion with parent deduplication and legacy ranking.
+- **`tests/test_storage.py`** (1 test): Verifies local storage persistence and memory mapping.
+- **`tests/test_generator.py`** (4 tests): Verifies parent context prompt building, structured citation parsing, token streaming, and offline fallback.
+- **`tests/test_api.py`** (4 tests): Verifies `/api/status`, `/api/cards`, `/api/query` streaming, and static frontend mounting.
+- **`tests/test_multibank.py`** (3 tests): Verifies discovery and cross-bank ingestion for CIBC and Scotiabank certificates.
+- **`tests/test_registry.py`** (1 test): Verifies dynamic discovery of bank folders, card slugs, and display names.
 
 ---
 
-### 5.9 `scripts/` — Developer Utilities & Evaluation Suites
-- **`scripts/inspect_policies.py`**: Terminal diagnostic tool inspecting PDF outline bookmarks and page-by-page policy transitions.
+### 5.10 `scripts/` — Developer Utilities & CLI Tools
+- **`scripts/index_all_cards.py`**: Master CLI ingestion script that scans `data/`, parses PDFs into parent sections & child chunks, and upserts dual vectors to Qdrant Cloud.
 - **`scripts/query.py`**: Standalone terminal client with ANSI colors and live token streaming for CLI evaluation.
 - **`scripts/eval_synthesis.py`**: Automated evaluation script measuring 4-part schema compliance, factual grounding, and negative control rejection.
+- **`scripts/inspect_policies.py`**: Terminal diagnostic tool inspecting PDF outline bookmarks and page-by-page policy transitions.
 
 ---
 
 ## 6. How to Run the System
 
-### 6.1 Start the Web Application
+### 6.1 Index All Insurance Booklets to Qdrant Cloud
+```powershell
+# Index all cards in data/ into Qdrant Cloud
+python scripts/index_all_cards.py
+
+# Or index a specific card by filter
+python scripts/index_all_cards.py --card td_aeroplan_vip
+python scripts/index_all_cards.py --card cibc_aeroplan_vip
+```
+
+### 6.2 Start the Web Application
 ```powershell
 python -m uvicorn api.main:app --reload --port 8001
 ```
 Open your browser at: **`http://localhost:8001/`**
 
-### 6.2 Run the Automated Test Suite (27/27 Tests)
+### 6.3 Run the Automated Test Suite (37/37 Tests)
 ```powershell
-pytest -v
+pytest tests/ -v
 ```
 
-### 6.3 Run Terminal Q&A Client
+### 6.4 Run Terminal Q&A Client
 ```powershell
 python scripts/query.py --card td_aeroplan_vip "What is the flight delay coverage limit?"
 ```
 
-### 6.4 Run Automated Synthesis Evaluation
+### 6.5 Run Automated Synthesis Evaluation
 ```powershell
 python scripts/eval_synthesis.py
 ```
@@ -291,34 +313,33 @@ If you are new to Retrieval-Augmented Generation (RAG), this section breaks down
 
 ---
 
-### 7.2 What is a "Chunk" and Why Do We Need "Breadcrumbs"?
-- **The Problem with Raw Documents**: An AI model cannot ingest a 50-page legal document with hundreds of clauses simultaneously without getting confused, slow, or exceeding token limits. We must slice the document into smaller pieces called **chunks** (~400 characters each).
-- **The "Torn Page" Trap**: If you tear a book into 500 tiny shreds, one shred might say: *"Coverage is capped at $1,000 for emergency accommodation."* If a user asks *"What is the car rental limit?"*, a simple search engine might pull that shred—even though it was actually about *flight delays*! The shred itself has no context.
-- **The Breadcrumb Solution**: Before we save any chunk, our parser prepends a navigation path:
-  ```text
-  [Card: TD Aeroplan VIP] > [Policy: Flight Delay Insurance] > [Section: Benefit Details] (Page 33)
-  ---
-  Coverage is capped at $1,000 for emergency accommodation after 4 hours delay.
-  ```
-  Now, every individual chunk carries its own identity, policy title, and exact page number, no matter where it gets moved.
+### 7.2 What is a "Chunk", a "Parent Section", and Why Do We Need "Breadcrumbs"?
+- **The Problem with Raw Documents**: An AI model cannot ingest a 50-page legal document with hundreds of clauses simultaneously without getting confused, slow, or exceeding token limits. We must slice the document into smaller pieces.
+- **The "Torn Page" Trap (Clause Orphaning)**: If you tear a book into tiny shreds (~400 characters), one shred might say: *"Coverage is capped at $1,000 for emergency accommodation."* If a user asks *"What is the car rental limit?"*, a simple search engine might pull that shred—even though it was actually about *flight delays*! Worse, the exclusion clause governing that $1,000 limit was located 3 paragraphs down on another shred and never retrieved.
+- **The Two-Tier Parent-Document Solution**:
+  1. **Child Chunks (`ChildChunk`, ~80–150 words)**: Small, sensitive search beacons tagged with physical page numbers and breadcrumbs (`[Card] > [Policy] > [Section] (Page X)`).
+  2. **Parent Sections (`ParentSection`, ~600–1,500 words)**: The full legal context (including the benefit schedule, exclusions, and deductibles) stored denormalized in Qdrant.
+  3. When a child chunk is found during search, our retriever expands it to its full parent section, giving the LLM complete legal context without severed clauses.
 
 ---
 
 ### 7.3 What is an "Embedding"?
 - In computer science, computers cannot compare the "meaning" of words directly; they only know numbers.
-- An **embedding model** (in our case, `sentence-transformers/all-MiniLM-L6-v2`) is a neural network trained on millions of sentence pairs. It reads a chunk of text and converts it into a list of **384 floating-point numbers** called a **vector** (e.g. `[0.042, -0.198, 0.812, ...]`).
-- Think of these 384 numbers as coordinates on a map of human concepts. Sentences with similar meanings land near each other on the map:
+- An **embedding model** is a deep neural network trained on millions of sentence pairs:
+  - **Production Model (`BAAI/bge-base-en-v1.5`, 768 dimensions)**: Highly dense, state-of-the-art semantic model running locally on our NVIDIA RTX 5070 GPU. It converts a chunk of text into a list of **768 floating-point numbers**.
+  - **Local Fallback Model (`all-MiniLM-L6-v2`, 384 dimensions)**: Lightweight CPU fallback producing 384 numbers.
+- Think of these numbers as coordinates on a 768-dimensional map of human concepts. Sentences with similar meanings land near each other on the map:
   - *"Flight was delayed for 5 hours"* and *"Plane late by five hours"* will have almost identical coordinate vectors, even though they share almost none of the same words!
 
 ---
 
 ### 7.4 What is "Cosine Similarity"?
 - How do we calculate how close two coordinate vectors are?
-- If you represent each 384-dimensional vector as an arrow pointing from the origin $(0,0,0...)$, **cosine similarity** measures the **angle** between the two arrows:
+- If you represent each 768-dimensional vector as an arrow pointing from the origin $(0,0,0...)$, **cosine similarity** measures the **angle** between the two arrows:
   - Angle is $0^\circ$ ($\cos = 1.0$): The two sentences mean the exact same thing.
   - Angle is $90^\circ$ ($\cos = 0.0$): The sentences are completely unrelated.
   - Angle is $180^\circ$ ($\cos = -1.0$): The sentences are opposite.
-- Because our vectors are **L2-normalized** (length scaled to 1.0), the cosine similarity is just the simple **dot product** (multiplying corresponding numbers and summing them up). Our system calculates this across hundreds of chunks in less than **0.5 milliseconds** using NumPy.
+- Because our vectors are **L2-normalized** (length scaled to 1.0), the cosine similarity is just the simple **dot product** (multiplying corresponding numbers and summing them up). In Qdrant Cloud, this search runs via an HNSW vector index in <2 milliseconds.
 
 ---
 
@@ -328,8 +349,8 @@ If you are new to Retrieval-Augmented Generation (RAG), this section breaks down
   - *"Vehicles with maximum manufacturer suggested retail price of $85,000"*
   - *"Vehicles with maximum manufacturer suggested retail price of $65,000"*
   look 99.2% identical because the grammar and vocabulary are the same. But in an insurance claim, that $20,000 difference is everything!
-- **BM25 (Best Matching 25)** is a classic keyword search algorithm. It scores documents based on how many times your exact words appear, giving huge bonuses to rare terms like `$85,000`, `deductible`, or `MSRP`.
-- **BM25Plus**: A modern upgrade that ensures longer policy sections aren't unfairly penalized just because they contain more legal preamble.
+- **BM25 (Best Matching 25)** is a classic keyword search algorithm. It scores documents based on how many times your exact words appear, giving huge bonuses to rare terms like `$85,000`, `$100,000`, `deductible`, or `MSRP`.
+- **Cloud BM25 Sparse Vectors**: In our system, `BM25SparseVectorizer` generates sparse vector dictionaries (`indices` + `values`) that live natively alongside dense vectors in Qdrant Cloud.
 
 ---
 
@@ -340,13 +361,12 @@ If you are new to Retrieval-Augmented Generation (RAG), this section breaks down
 - But BM25 gives scores like `18.42` or `4.1`, while vector search gives scores between `0.0` and `1.0`. You cannot simply add them together.
 - **RRF solves this by looking only at ranking positions (1st, 2nd, 3rd...), not raw scores:**
   $$\text{Score}(chunk) = \frac{1}{60 + \text{BM25 Rank}} + \frac{1}{60 + \text{Dense Rank}}$$
-  - If a chunk ranks #1 in BM25 and #2 in Dense, it gets an unbeatable combined rank.
-  - If a chunk is only found by one method, it still gets credited, but chunks that satisfy **both** keyword match and semantic concept always rise to the top.
+- **Server-Side Fusion in Qdrant Cloud**: Instead of downloading hundreds of candidates and computing reciprocal ranks in Python, Qdrant Cloud performs RRF fusion directly inside the cluster engine during the single `query_points()` call.
 
 ---
 
 ### 7.7 What is Grounded Generation & Negative Control?
-- Once the top-8 chunks are retrieved, we feed them to our local LLM (`qwen2.5:7b`).
+- Once the top-8 child hits are retrieved and deduplicated into top 2–3 unique parent sections, we feed them to our local LLM (`qwen2.5:7b`).
 - We enforce strict **Citation Guardrails**:
   - The model must output an exact 4-part structure: Direct Answer, Limits, Conditions, Citations.
   - **Negative Control**: If a user asks *"Is my cat covered for travel emergency?"*, the retriever brings back the closest travel medical chunks. Those chunks only mention humans. The model is forbidden from extrapolating; it must explicitly decline coverage.
@@ -365,37 +385,44 @@ If you are new to Retrieval-Augmented Generation (RAG), this section breaks down
 If you want to read through the repository to learn how a production RAG system works from scratch, follow this step-by-step path:
 
 ```text
-Step 1: Inspect the Raw Data
+Step 1: Inspect the Raw Data & Extracted Markdown
+   ├─ data/td/TD Aeroplan Visa Infinite Privilege Card COI.pdf
    └─ data/extracted/td_aeroplan_visa_infinite_privilege_card_coi.md
       (Look at how a 52-page PDF looks once converted to continuous Markdown with tables)
 
-Step 2: Understand Parsing & Hierarchy
-   └─ src/parser.py (Read parse_pdf and _split_markdown_into_sections)
-      (See how bookmarks and headings turn into DocumentChunk objects with breadcrumbs)
+Step 2: Understand Two-Tier Parsing & Hierarchy
+   └─ src/parser.py (Read ParentSection, ChildChunk, and parse_markdown_text)
+      (See how headers turn into ParentSection and ChildChunk objects with line-by-line page tracking)
 
-Step 3: Understand Storage & Vectorization
-   └─ src/storage.py (Read save_card_index and load_card_index)
-      (See how BM25Plus is fitted and how MiniLM-L6-v2 encodes chunks into embeddings.npy)
+Step 3: Understand Cloud-Native BM25 Tokenization
+   └─ src/bm25_vectorizer.py (Read encode_text and encode_query)
+      (See how text is converted to Qdrant SparseVector dictionaries with stopword pruning)
 
-Step 4: Understand Hybrid Retrieval & RRF
-   └─ src/retriever.py (Read _filter_stopwords and retrieve)
-      (See how dual-scoring works and how RRF mathematically merges ranks)
+Step 4: Understand Dual-Vector Storage & Batch Upsert
+   ├─ src/storage.py (Read QdrantStorageManager.save_card_chunks)
+   └─ scripts/index_all_cards.py (Read index_cards CLI workflow)
+      (See how named dense and sparse vectors are uploaded to Qdrant Cloud)
 
-Step 5: Understand Grounded Generation
+Step 5: Understand Hybrid Retrieval & Server-Side RRF
+   └─ src/retriever.py (Read HybridParentRetriever.retrieve)
+      (See how single-query Qdrant RRF fusion and parent deduplication work)
+
+Step 6: Understand Grounded Generation
    └─ src/generator.py (Read SYSTEM_PROMPT, _build_context_prompt, and generate_stream)
       (See how the LLM is constrained to produce citations and avoid hallucinations)
 
-Step 6: Understand the API & Streaming Protocol
+Step 7: Understand the API & Streaming Protocol
    └─ api/main.py (Read sse_event_generator and stream_query)
       (See how FastAPI packages retrieved context, tokens, and citations into an SSE stream)
 
-Step 7: Understand the Client Interface
-   └─ frontend/app.js (Read executeStreamQuery and renderMarkdown)
-      (See how JavaScript reads the stream and renders the Dark Fintech UI)
+Step 8: Understand the Client Interface
+   ├─ frontend/index.html (Semantic UI structure)
+   └─ frontend/app.js (Read executeStreamQuery and renderGroundingSources)
+      (See how JavaScript reads the stream and renders citation drawers with exact page badges)
 
-Step 8: Run and Read the Tests
-   └─ tests/test_benchmark_td.py
-      (See the 10 real-world benchmark questions that verify 100% precision)
+Step 9: Run and Read the Tests
+   ├─ tests/test_benchmark_cibc.py (CIBC auto rental MSRP and age-tiered medical tests)
+   └─ tests/test_benchmark_td.py (10-question TD benchmark suite)
 ```
 
 ---

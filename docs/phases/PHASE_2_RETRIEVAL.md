@@ -6,6 +6,9 @@
 
 ---
 
+> [!NOTE]
+> **Phase 5 Evolution**: In Phase 5, this local dual-artifact retrieval engine was elevated to a **Qdrant Cloud Native Hybrid Architecture** (`QdrantStorageManager` + `HybridParentRetriever`) utilizing cloud-native BM25 sparse vectors, BGE-base (768-d), and server-side RRF fusion. See [Phase 5 Guide](PHASE_5_PARENT_DOCUMENT_QDRANT.md).
+
 ## 1. Objectives & Architectural Goal
 
 Insurance documents require an information retrieval system that excels in two contrasting search modalities:

@@ -6,6 +6,9 @@
 
 ---
 
+> [!NOTE]
+> **Phase 5 Evolution**: In Phase 5, the full-stack system was connected directly to **Qdrant Cloud** and the two-tier Parent-Document engine, streaming child citations with physical page badges alongside expandable full parent section text. Automated multi-card ingestion is supported via `scripts/index_all_cards.py`. See [Phase 5 Guide](PHASE_5_PARENT_DOCUMENT_QDRANT.md).
+
 ## 1. Objectives & Architectural Goal
 
 Phase 4 packages the backend ingestion, hybrid retrieval, and grounded generation into an interactive, user-facing full-stack web application:

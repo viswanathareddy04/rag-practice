@@ -6,6 +6,9 @@
 
 ---
 
+> [!NOTE]
+> **Phase 5 Evolution**: In Phase 5, synthesis context was upgraded from flat 400-character chunks to two-tier **Parent Sections** (`RetrievedContext`). Full legal sections (~600–1,500 words) containing all exclusions and conditions are delivered to the LLM to eliminate clause orphaning. See [Phase 5 Guide](PHASE_5_PARENT_DOCUMENT_QDRANT.md).
+
 ## 1. Objectives & Architectural Goal
 
 The objective of Phase 3 is to take retrieved, rank-fused chunks and produce an **authoritative, hallucination-free response** grounded strictly in the provided Certificate of Insurance.
