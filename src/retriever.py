@@ -26,6 +26,16 @@ class MultiCardContext:
     card_names: Dict[str, str]                 # card_id -> display card name
 
 
+CARD_ID_ALIASES: Dict[str, str] = {
+    "td_aeroplan_vip": "td_aeroplan_visa_infinite_privilege_card_coi",
+    "cibc_aeroplan_vip": "cibc_aeroplan_visa_infinite_privilege_card_insurance",
+    "scotia_passport_vip": "passport_visa_inifite_privilege_card_certificate_of_insurance_2025_en",
+    "td_aeroplan_visa_infinite_privilege_card_coi": "td_aeroplan_vip",
+    "cibc_aeroplan_visa_infinite_privilege_card_insurance": "cibc_aeroplan_vip",
+    "passport_visa_inifite_privilege_card_certificate_of_insurance_2025_en": "scotia_passport_vip",
+}
+
+
 class HybridParentRetriever:
     """Performs card-scoped hybrid retrieval combining BM25 sparse vectors and dense embeddings via Qdrant Cloud RRF,
     then expands top child matches into deduplicated ParentSections."""
@@ -36,7 +46,7 @@ class HybridParentRetriever:
         self.collection_name = storage_manager.COLLECTION_NAME
         self.rrf_k = rrf_k
 
-    def retrieve(self, card_id: str, query: str, top_k_parents: int = 3, top_k_children: int = 8) -> RetrievedContext:
+    def retrieve(self, card_id: str, query: str, top_k_parents: int = 4, top_k_children: int = 15) -> RetrievedContext:
         """Executes hybrid dense + sparse search in Qdrant Cloud and resolves to ParentSections."""
         # 1. Encode dense query
         dense_query = self.storage_manager.embedder.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
@@ -44,8 +54,12 @@ class HybridParentRetriever:
         # 2. Encode sparse query (BM25)
         sparse_query = self.storage_manager.bm25_vectorizer.encode_query(query)
 
+        target_ids = [card_id]
+        if card_id in CARD_ID_ALIASES:
+            target_ids.append(CARD_ID_ALIASES[card_id])
+
         card_filter = models.Filter(
-            must=[models.FieldCondition(key="card_id", match=models.MatchValue(value=card_id))]
+            must=[models.FieldCondition(key="card_id", match=models.MatchAny(any=target_ids))]
         )
 
         # 3. Single Qdrant Cloud hybrid query with RRF
@@ -53,8 +67,8 @@ class HybridParentRetriever:
             res = self.client.query_points(
                 collection_name=self.collection_name,
                 prefetch=[
-                    models.Prefetch(query=dense_query, using="dense", filter=card_filter, limit=20),
-                    models.Prefetch(query=sparse_query, using="bm25", filter=card_filter, limit=20),
+                    models.Prefetch(query=dense_query, using="dense", filter=card_filter, limit=30),
+                    models.Prefetch(query=sparse_query, using="bm25", filter=card_filter, limit=30),
                 ],
                 query=models.FusionQuery(fusion=models.Fusion.RRF),
                 limit=top_k_children
@@ -110,22 +124,26 @@ class HybridParentRetriever:
         self,
         card_ids: List[str],
         query: str,
-        top_k_parents_per_card: int = 2,
-        top_k_children_per_card: int = 6
+        top_k_parents_per_card: int = 4,
+        top_k_children_per_card: int = 15
     ) -> MultiCardContext:
         """Executes parallel hybrid search across multiple cards in Qdrant Cloud."""
         card_contexts: Dict[str, RetrievedContext] = {}
         card_names: Dict[str, str] = {}
 
         def _fetch_card(cid: str):
-            ctx = self.retrieve(
-                card_id=cid,
-                query=query,
-                top_k_parents=top_k_parents_per_card,
-                top_k_children=top_k_children_per_card
-            )
+            try:
+                ctx = self.retrieve(
+                    card_id=cid,
+                    query=query,
+                    top_k_parents=top_k_parents_per_card,
+                    top_k_children=top_k_children_per_card
+                )
+            except Exception:
+                ctx = RetrievedContext(parents=[], citations=[])
             c_name = ctx.parents[0].card_name if ctx.parents and ctx.parents[0].card_name else cid
             return cid, c_name, ctx
+
 
         with ThreadPoolExecutor(max_workers=min(len(card_ids), 3)) as executor:
             futures = [executor.submit(_fetch_card, cid) for cid in card_ids]

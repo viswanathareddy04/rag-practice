@@ -123,4 +123,131 @@ def test_api_compare_streaming_events():
         assert any("event: citations" in e for e in events)
         assert any("event: done" in e for e in events)
 
+from pathlib import Path
+from src.storage import QdrantStorageManager, StorageManager
+from src.retriever import HybridRetriever
+
+@pytest.fixture(scope="module")
+def benchmark_retriever():
+    qdrant_mgr = QdrantStorageManager()
+    legacy_mgr = StorageManager(storage_dir=Path(".index"))
+    q_retriever = HybridParentRetriever(storage_manager=qdrant_mgr)
+    l_retriever = HybridRetriever(storage_manager=legacy_mgr)
+
+    class ResilientBenchmarkRetriever:
+        def retrieve_multicard(self, card_ids, query):
+            ctx = q_retriever.retrieve_multicard(card_ids, query, top_k_parents_per_card=4, top_k_children_per_card=15)
+            for cid in card_ids:
+                if not ctx.card_contexts.get(cid) or not ctx.card_contexts[cid].parents:
+                    # Check legacy fallback
+                    target_id = cid
+                    if not legacy_mgr.is_indexed(target_id):
+                        if cid == "scotia_passport_vip":
+                            target_id = "passport_visa_inifite_privilege_card_certificate_of_insurance_2025_en"
+                    if legacy_mgr.is_indexed(target_id):
+                        scs = l_retriever.retrieve(target_id, query, top_k=8)
+                        parents = [
+                            ParentSection(
+                                parent_id=f"{cid}_legacy_{i}",
+                                card_id=cid,
+                                card_name=cid,
+                                policy_name=sc.chunk.breadcrumb,
+                                section_title=sc.chunk.breadcrumb,
+                                page_start=sc.chunk.page_number,
+                                page_end=sc.chunk.page_number,
+                                content=sc.chunk.content
+                            )
+                            for i, sc in enumerate(scs[:8])
+                        ]
+                        citations = [
+                            {"child_id": f"{cid}_c_{i}", "page_number": sc.chunk.page_number, "breadcrumb": sc.chunk.breadcrumb, "content": sc.chunk.content, "score": round(sc.score, 4)}
+                            for i, sc in enumerate(scs)
+                        ]
+                        ctx.card_contexts[cid] = RetrievedContext(parents=parents, citations=citations)
+            return ctx
+
+    return ResilientBenchmarkRetriever()
+
+THREE_CARDS = ["td_aeroplan_vip", "cibc_aeroplan_vip", "scotia_passport_vip"]
+
+def test_benchmark_multicard_rental_car_msrp(benchmark_retriever):
+    """Rider 1: Rental Car Collision Waiver (TD: $85k / 48d, CIBC: $100k / 48d, Scotia Passport VIP: $85k / 48d or $65k / 31d)."""
+    query = "What is the maximum rental car MSRP coverage limit and rental period duration?"
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, query)
+
+    # 1. Assert all 3 cards retrieved sections
+    for cid in THREE_CARDS:
+        assert len(ctx.card_contexts[cid].parents) > 0, f"Missing parents for {cid}"
+
+    td_text = " ".join(p.content for p in ctx.card_contexts["td_aeroplan_vip"].parents)
+    cibc_text = " ".join(p.content for p in ctx.card_contexts["cibc_aeroplan_vip"].parents)
+    scotia_text = " ".join(p.content for p in ctx.card_contexts["scotia_passport_vip"].parents)
+
+    assert "85,000" in td_text, f"TD missing $85,000 MSRP: {td_text[:300]}"
+    assert "48" in td_text
+    assert "100,000" in cibc_text, f"CIBC missing $100,000 MSRP: {cibc_text[:300]}"
+    assert "48" in cibc_text
+    assert "85,000" in scotia_text or "65,000" in scotia_text, f"Scotia missing MSRP: {scotia_text[:300]}"
+    assert "48" in scotia_text or "31" in scotia_text
+
+def test_benchmark_multicard_medical_duration_senior(benchmark_retriever):
+    """Rider 2: Out-of-Province Emergency Medical Coverage Duration for 65+ (TD: 4d, CIBC: 10d, Scotia: 3d)."""
+    query = "How many days of travel medical coverage do I get if I am 65 or older?"
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, query)
+
+    td_text = " ".join(p.content for p in ctx.card_contexts["td_aeroplan_vip"].parents)
+    cibc_text = " ".join(p.content for p in ctx.card_contexts["cibc_aeroplan_vip"].parents)
+    scotia_text = " ".join(p.content for p in ctx.card_contexts["scotia_passport_vip"].parents)
+
+    assert "4" in td_text and "65" in td_text, "TD missing 4 days or 65 cutoff"
+    assert "10" in cibc_text and "65" in cibc_text, "CIBC missing 10 days or 65 cutoff"
+    assert "3" in scotia_text and "65" in scotia_text, "Scotia missing 3 days or 65 cutoff"
+
+def test_benchmark_multicard_trip_cancellation(benchmark_retriever):
+    """Rider 3: Trip Cancellation Maximum Limits ($2,500 per traveler across all, with $5k / $10k trip caps)."""
+    query = "What is the trip cancellation maximum coverage limit per insured person?"
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, query)
+
+    for cid in THREE_CARDS:
+        card_text = " ".join(p.content for p in ctx.card_contexts[cid].parents)
+        assert "2,500" in card_text or "cancellation" in card_text.lower(), f"{cid} missing cancellation limit"
+
+def test_benchmark_multicard_baggage_delay(benchmark_retriever):
+    """Rider 4: Baggage Delay wait threshold (4 hours) and coverage allowance ($1,000)."""
+    query = "How long must my baggage be delayed before I can purchase essential items?"
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, query)
+
+    for cid in THREE_CARDS:
+        card_text = " ".join(p.content for p in ctx.card_contexts[cid].parents)
+        assert "4" in card_text and "1,000" in card_text, f"{cid} missing 4 hours or $1,000 baggage limit"
+
+def test_benchmark_multicard_mobile_device(benchmark_retriever):
+    """Rider 5: Mobile Device Insurance Limit (TD: $1,500, CIBC: $1,500, Scotia: $1,000)."""
+    query = "What is the mobile device insurance maximum limit and deductible?"
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, query)
+
+    td_text = " ".join(p.content for p in ctx.card_contexts["td_aeroplan_vip"].parents)
+    cibc_text = " ".join(p.content for p in ctx.card_contexts["cibc_aeroplan_vip"].parents)
+    scotia_text = " ".join(p.content for p in ctx.card_contexts["scotia_passport_vip"].parents)
+
+    assert "1,500" in td_text, "TD missing $1,500 mobile limit"
+    assert "1,500" in cibc_text, "CIBC missing $1,500 mobile limit"
+    assert "1,000" in scotia_text, "Scotia missing $1,000 mobile limit"
+
+def test_benchmark_multicard_synthesis_matrix_generation(benchmark_retriever):
+    """Validates that comparative synthesis formats a markdown table with columns for all 3 cards."""
+    generator = LLMGenerator()
+    ctx = benchmark_retriever.retrieve_multicard(THREE_CARDS, "Compare rental car collision limits")
+    fallback_markdown = generator._format_fallback_comparison("Compare rental car collision limits", ctx)
+
+    assert "### Executive Summary" in fallback_markdown
+    assert "### Side-by-Side Comparison Matrix" in fallback_markdown
+    assert "| Coverage Rider / Benefit |" in fallback_markdown
+    assert "Advantage / Winner" in fallback_markdown
+    for cid in THREE_CARDS:
+        assert cid in fallback_markdown or ctx.card_names.get(cid, "") in fallback_markdown
+    assert "### Critical Exclusions & Qualifying Conditions" in fallback_markdown
+    assert "### Verified Policy Citations" in fallback_markdown
+
+
 

@@ -213,8 +213,8 @@ def sse_compare_event_generator(card_ids: List[str], query: str) -> Generator[st
     multi_ctx = qdrant_retriever.retrieve_multicard(
         card_ids=card_ids,
         query=query,
-        top_k_parents_per_card=2,
-        top_k_children_per_card=6
+        top_k_parents_per_card=4,
+        top_k_children_per_card=15
     )
 
     # Fallback to legacy index for any card that yielded empty parents
@@ -222,7 +222,7 @@ def sse_compare_event_generator(card_ids: List[str], query: str) -> Generator[st
         ctx = multi_ctx.card_contexts.get(cid)
         if (not ctx or not ctx.parents) and (legacy_storage.is_indexed(cid) or (cid in REVERSE_ALIASES and legacy_storage.is_indexed(REVERSE_ALIASES[cid]))):
             target_id = cid if legacy_storage.is_indexed(cid) else REVERSE_ALIASES[cid]
-            legacy_chunks = legacy_retriever.retrieve(card_id=target_id, query=query, top_k=6)
+            legacy_chunks = legacy_retriever.retrieve(card_id=target_id, query=query, top_k=8)
             if legacy_chunks:
                 parents = [
                     ParentSection(
@@ -235,7 +235,7 @@ def sse_compare_event_generator(card_ids: List[str], query: str) -> Generator[st
                         page_end=sc.chunk.page_number,
                         content=sc.chunk.content
                     )
-                    for i, sc in enumerate(legacy_chunks[:2])
+                    for i, sc in enumerate(legacy_chunks[:6])
                 ]
                 citations = [
                     {
