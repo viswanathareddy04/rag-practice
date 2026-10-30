@@ -120,11 +120,13 @@
                                 placeholder="Ask any question about coverage, limits, exclusions, or deductibles..."
                                 aria-label="Insurance question input"
                             ></textarea>
-                            <button type="submit" id="submitBtn" class="send-btn" aria-label="Send query">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                                </svg>
+                            <button type="submit" id="submitBtn" class="send-btn" aria-label="Send query" title="Send query (Enter)">
+                                <span class="btn-icon">
+                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                    </svg>
+                                </span>
                             </button>
                         </div>
                         <div class="input-meta">
@@ -149,6 +151,10 @@
                         <h2>Grounding Sources</h2>
                     </div>
                     <span id="sourcesCount" class="badge-count">0 Chunks</span>
+                </div>
+                <div id="activeSourcesQuery" class="active-sources-query" style="display: none;">
+                    <span class="active-query-label">Query:</span>
+                    <span class="active-query-text" id="activeQueryText"></span>
                 </div>
 
                 <div class="citations-scroll" id="citationsScroll">

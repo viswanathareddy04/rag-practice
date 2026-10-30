@@ -27,6 +27,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const sourcesCount = document.getElementById("sourcesCount");
     const citationsEmptyState = document.getElementById("citationsEmptyState");
     const sourcesList = document.getElementById("sourcesList");
+    const activeSourcesQuery = document.getElementById("activeSourcesQuery");
+    const activeQueryText = document.getElementById("activeQueryText");
 
     // Application State
     let currentMode = "single"; // "single" | "compare"
@@ -34,6 +36,84 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedCard = null;
     let selectedCompareCards = new Set();
     let isStreaming = false;
+    let activeAbortController = null;
+    let activeAssistantMessage = null;
+
+    const SEND_ICON_HTML = `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+    `;
+    const STOP_ICON_HTML = `
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <rect x="5" y="5" width="14" height="14" rx="2" ry="2"></rect>
+        </svg>
+    `;
+
+    function updateSubmitButtonState(streaming) {
+        if (!submitBtn) return;
+        const iconSpan = submitBtn.querySelector(".btn-icon");
+        if (streaming) {
+            submitBtn.classList.add("stop-btn");
+            submitBtn.disabled = false;
+            submitBtn.setAttribute("aria-label", "Stop generating");
+            submitBtn.setAttribute("title", "Stop generating (Esc)");
+            if (iconSpan) iconSpan.innerHTML = STOP_ICON_HTML;
+        } else {
+            submitBtn.classList.remove("stop-btn");
+            submitBtn.disabled = false;
+            submitBtn.setAttribute("aria-label", "Send query");
+            submitBtn.setAttribute("title", "Send query (Enter)");
+            if (iconSpan) iconSpan.innerHTML = SEND_ICON_HTML;
+        }
+    }
+
+    function stopActiveStream() {
+        if (!isStreaming || !activeAbortController) return;
+        activeAbortController.abort();
+    }
+
+    function setActiveQuerySourcesHeader(query, contextLabel = "") {
+        if (!activeSourcesQuery || !activeQueryText) return;
+        activeSourcesQuery.style.display = "flex";
+        activeQueryText.textContent = `"${query}"${contextLabel ? ` · ${contextLabel}` : ""}`;
+        sourcesCount.textContent = "Retrieving...";
+        citationsEmptyState.style.display = "none";
+        sourcesList.style.display = "flex";
+        sourcesList.innerHTML = `
+            <div class="citations-loading-state">
+                <span class="pulse-dot"></span>
+                <span>Retrieving grounded certificate clauses for this query...</span>
+            </div>
+        `;
+    }
+
+    function attachSourcesButtonToMessage(msgEl, onClickHandler) {
+        if (!msgEl) return;
+        const header = msgEl.querySelector(".message-header");
+        if (!header) return;
+
+        let existingBtn = header.querySelector(".message-sources-btn");
+        if (existingBtn) {
+            existingBtn.onclick = onClickHandler;
+            return;
+        }
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "message-sources-btn";
+        btn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>Sources</span>
+        `;
+        btn.setAttribute("title", "View grounding sources for this answer");
+        btn.addEventListener("click", onClickHandler);
+        header.appendChild(btn);
+    }
 
     // Single vs Comparison Suggestion Prompts
     const SINGLE_PROMPTS = [
@@ -283,14 +363,39 @@ document.addEventListener("DOMContentLoaded", () => {
         queryInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                handleFormSubmit();
+                if (isStreaming) {
+                    stopActiveStream();
+                } else {
+                    handleFormSubmit();
+                }
             }
         });
 
         // Form Submit
         queryForm.addEventListener("submit", (e) => {
             e.preventDefault();
+            if (isStreaming) {
+                stopActiveStream();
+                return;
+            }
             handleFormSubmit();
+        });
+
+        // Submit/Stop Button Click
+        submitBtn.addEventListener("click", (e) => {
+            if (isStreaming) {
+                e.preventDefault();
+                e.stopPropagation();
+                stopActiveStream();
+            }
+        });
+
+        // Global Escape Key to Stop Streaming
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && isStreaming) {
+                e.preventDefault();
+                stopActiveStream();
+            }
         });
     }
 
@@ -311,8 +416,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function executeStreamQuery(query) {
+        if (isStreaming) return;
+
         isStreaming = true;
-        submitBtn.disabled = true;
+        updateSubmitButtonState(true);
         queryInput.disabled = true;
 
         appendUserMessage(query);
@@ -328,6 +435,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const startTime = Date.now();
         let accumulatedText = "";
 
+        activeAbortController = new AbortController();
+        activeAssistantMessage = { element: assistantMsgEl, bodyEl, timeEl };
+
+        const cardLabel = selectedCard ? `${selectedCard.bank} ${selectedCard.card_name.replace("Visa Infinite Privilege Card", "VIP")}` : "";
+        setActiveQuerySourcesHeader(query, cardLabel);
+
         try {
             const response = await fetch("/api/query", {
                 method: "POST",
@@ -336,6 +449,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     card_id: selectedCard.card_id,
                     query: query,
                 }),
+                signal: activeAbortController.signal,
             });
 
             if (!response.ok) throw new Error(`Server returned HTTP ${response.status}`);
@@ -363,6 +477,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (event === "context") {
                         renderGroundingSources(data);
+                        attachSourcesButtonToMessage(assistantMsgEl, () => {
+                            setActiveQuerySourcesHeader(query, cardLabel);
+                            renderGroundingSources(data);
+                        });
                     } else if (event === "token") {
                         accumulatedText += data;
                         bodyEl.innerHTML = renderMarkdown(accumulatedText);
@@ -376,19 +494,32 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         } catch (err) {
-            console.error("Stream error:", err);
-            bodyEl.innerHTML = `<p style="color: #EF4444;">Error generating response: ${escapeHtml(err.message)}</p>`;
+            if (err.name === "AbortError" || activeAbortController?.signal?.aborted) {
+                const indicator = bodyEl.querySelector(".streaming-indicator");
+                if (indicator) indicator.remove();
+                if (!accumulatedText.trim()) {
+                    bodyEl.innerHTML = `<p style="color: var(--text-muted); font-style: italic;">Generation stopped by user.</p>`;
+                }
+                timeEl.innerHTML = `<span class="badge-stopped">Stopped</span>`;
+            } else {
+                console.error("Stream error:", err);
+                bodyEl.innerHTML = `<p style="color: #EF4444;">Error generating response: ${escapeHtml(err.message)}</p>`;
+            }
         } finally {
             isStreaming = false;
-            submitBtn.disabled = false;
+            activeAbortController = null;
+            activeAssistantMessage = null;
+            updateSubmitButtonState(false);
             queryInput.disabled = false;
             queryInput.focus();
         }
     }
 
     async function executeCompareStreamQuery(query) {
+        if (isStreaming) return;
+
         isStreaming = true;
-        submitBtn.disabled = true;
+        updateSubmitButtonState(true);
         queryInput.disabled = true;
 
         const activeCardIds = Array.from(selectedCompareCards);
@@ -410,6 +541,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const startTime = Date.now();
         let accumulatedText = "";
 
+        activeAbortController = new AbortController();
+        activeAssistantMessage = { element: assistantMsgEl, bodyEl, timeEl };
+
+        const compareLabel = `${activeCardIds.length} Cards Comparison`;
+        setActiveQuerySourcesHeader(query, compareLabel);
+
         try {
             const response = await fetch("/api/compare", {
                 method: "POST",
@@ -418,6 +555,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     card_ids: activeCardIds,
                     query: query,
                 }),
+                signal: activeAbortController.signal,
             });
 
             if (!response.ok) throw new Error(`Server returned HTTP ${response.status}`);
@@ -445,12 +583,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (event === "cards_context") {
                         renderSegmentedSources(data);
+                        attachSourcesButtonToMessage(assistantMsgEl, () => {
+                            setActiveQuerySourcesHeader(query, compareLabel);
+                            renderSegmentedSources(data);
+                        });
                     } else if (event === "token") {
                         accumulatedText += data;
                         bodyEl.innerHTML = renderMarkdown(accumulatedText);
                         scrollToBottom();
                     } else if (event === "citations") {
                         renderSegmentedSources(data);
+                        attachSourcesButtonToMessage(assistantMsgEl, () => {
+                            setActiveQuerySourcesHeader(query, compareLabel);
+                            renderSegmentedSources(data);
+                        });
                     } else if (event === "done") {
                         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                         timeEl.textContent = `${elapsed}s (Multi-Card)`;
@@ -458,11 +604,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         } catch (err) {
-            console.error("Compare stream error:", err);
-            bodyEl.innerHTML = `<p style="color: #EF4444;">Error generating comparison: ${escapeHtml(err.message)}</p>`;
+            if (err.name === "AbortError" || activeAbortController?.signal?.aborted) {
+                const indicator = bodyEl.querySelector(".streaming-indicator");
+                if (indicator) indicator.remove();
+                if (!accumulatedText.trim()) {
+                    bodyEl.innerHTML = `<p style="color: var(--text-muted); font-style: italic;">Comparison generation stopped by user.</p>`;
+                }
+                timeEl.innerHTML = `<span class="badge-stopped">Stopped</span>`;
+            } else {
+                console.error("Compare stream error:", err);
+                bodyEl.innerHTML = `<p style="color: #EF4444;">Error generating comparison: ${escapeHtml(err.message)}</p>`;
+            }
         } finally {
             isStreaming = false;
-            submitBtn.disabled = false;
+            activeAbortController = null;
+            activeAssistantMessage = null;
+            updateSubmitButtonState(false);
             queryInput.disabled = false;
             queryInput.focus();
         }
