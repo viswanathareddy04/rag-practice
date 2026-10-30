@@ -729,6 +729,260 @@ kbd {
     font-family: var(--font-mono);
 }
 
+/* Comparison Mode Navigation Tabs */
+.view-mode-tabs {
+    display: flex;
+    align-items: center;
+    background: rgba(10, 15, 29, 0.7);
+    padding: 3px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    gap: 4px;
+}
+
+.mode-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.85rem;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.mode-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.mode-tab.active {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(16, 185, 129, 0.18));
+    color: #FFFFFF;
+    border: 1px solid rgba(6, 182, 212, 0.35);
+    box-shadow: 0 0 12px rgba(6, 182, 212, 0.15);
+}
+
+/* Multi-Card Selector Controls */
+.multi-card-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.multi-card-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.selection-hint {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+.selection-hint.warning {
+    color: #F59E0B;
+}
+
+.card-pills-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.card-pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 9999px;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.card-pill-btn:hover {
+    border-color: var(--accent-cyan);
+    color: var(--text-primary);
+}
+
+.card-pill-btn.selected {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.22), rgba(16, 185, 129, 0.22));
+    border-color: var(--accent-cyan);
+    color: #FFFFFF;
+    font-weight: 600;
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.2);
+}
+
+.card-pill-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid var(--border-subtle);
+    font-size: 10px;
+    line-height: 1;
+}
+
+.card-pill-btn.selected .card-pill-check {
+    border-color: var(--accent-cyan);
+    background: var(--accent-cyan);
+    color: #080C14;
+    font-weight: 800;
+}
+
+/* Side-by-Side Comparison Matrix Table */
+.matrix-table-container {
+    width: 100%;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    background: rgba(10, 15, 29, 0.85);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.matrix-table-container::-webkit-scrollbar {
+    height: 6px;
+}
+
+.matrix-table-container::-webkit-scrollbar-track {
+    background: rgba(8, 12, 20, 0.6);
+}
+
+.matrix-table-container::-webkit-scrollbar-thumb {
+    background: rgba(6, 182, 212, 0.35);
+    border-radius: 3px;
+}
+
+.matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    text-align: left;
+    min-width: 580px;
+}
+
+.matrix-table th {
+    background: rgba(15, 23, 42, 0.95);
+    color: var(--accent-cyan);
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid rgba(6, 182, 212, 0.3);
+    white-space: nowrap;
+}
+
+.matrix-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    vertical-align: top;
+    line-height: 1.45;
+}
+
+.matrix-table tr:nth-child(even) td {
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.matrix-table tr:hover td {
+    background: rgba(6, 182, 212, 0.04);
+}
+
+.matrix-table td.col-winner,
+.matrix-table td:last-child {
+    color: var(--accent-emerald);
+    font-weight: 600;
+    background: rgba(16, 185, 129, 0.04);
+}
+
+/* User Message Card Badges */
+.compared-cards-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.card-tag-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    background: rgba(6, 182, 212, 0.15);
+    border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--accent-cyan);
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+/* Bank-Grouped Accordion in Citations Drawer */
+.bank-accordion {
+    margin-bottom: 0.85rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: rgba(14, 21, 38, 0.5);
+    overflow: hidden;
+}
+
+.bank-accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.85rem;
+    background: rgba(15, 23, 42, 0.8);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition-fast);
+}
+
+.bank-accordion-header:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.bank-accordion-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #FFFFFF;
+}
+
+.bank-accordion-icon {
+    font-size: 0.65rem;
+    color: var(--text-tertiary);
+    transition: transform var(--transition-fast);
+}
+
+.bank-accordion.open .bank-accordion-icon {
+    transform: rotate(90deg);
+}
+
+.bank-accordion-body {
+    display: none;
+    padding: 0.5rem;
+    gap: 0.5rem;
+    flex-direction: column;
+}
+
+.bank-accordion.open .bank-accordion-body {
+    display: flex;
+}
+
 /* Animations */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
@@ -754,4 +1008,9 @@ kbd {
     .citations-panel {
         display: none;
     }
+
+    .view-mode-tabs span {
+        display: none;
+    }
 }
+

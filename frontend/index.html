@@ -27,8 +27,19 @@
                 </div>
             </div>
 
+            <div class="view-mode-tabs" role="tablist">
+                <button class="mode-tab active" id="singleCardModeBtn" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    <span>Single Card Chat</span>
+                </button>
+                <button class="mode-tab" id="compareModeBtn" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>
+                    <span>Multi-Card Comparison</span>
+                </button>
+            </div>
+
             <div class="header-controls">
-                <div class="control-group">
+                <div class="control-group" id="singleCardGroup">
                     <label for="cardSelect" class="control-label">Active Card</label>
                     <div class="select-wrapper">
                         <select id="cardSelect" aria-label="Select Credit Card">
@@ -36,6 +47,17 @@
                         </select>
                     </div>
                 </div>
+
+                <div class="control-group multi-card-group" id="multiCardGroup" style="display: none;">
+                    <div class="multi-card-label-row">
+                        <label class="control-label">Select 2–3 Cards (<span id="selectedCardCount">0</span>/3)</label>
+                        <span class="selection-hint" id="selectionHint">Min 2 required</span>
+                    </div>
+                    <div class="card-pills-selector" id="cardPillsSelector">
+                        <!-- Dynamically populated toggle pills -->
+                    </div>
+                </div>
+
 
                 <div class="status-indicators">
                     <span id="indexStatus" class="status-pill status-ready" title="Card index status">
