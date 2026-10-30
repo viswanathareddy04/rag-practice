@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Generator, Union
 import httpx
 
-from src.retriever import ScoredChunk, RetrievedContext
+from src.retriever import ScoredChunk, RetrievedContext, MultiCardContext
 
 SYSTEM_PROMPT = """You are an expert Credit Card Insurance Specialist. Your goal is to provide accurate, reliable, 
 and clear explanations of credit card insurance benefits strictly based on the provided certificate context.
@@ -28,6 +28,34 @@ FORMAT YOUR ANSWER WITH CLEAR HEADINGS:
 ### Policy Citations
 ...
 """
+
+COMPARISON_SYSTEM_PROMPT = """You are an expert Credit Card Insurance Comparative Specialist.
+Your task is to provide an objective, rigorous, and accurate side-by-side comparison of insurance coverage 
+across the specified credit cards strictly based on their respective policy excerpts.
+
+RULES:
+1. ONLY use the provided context for each card. Do not assume or hallucinate benefits.
+2. If a card's excerpt does not state a limit, condition, or rider, write "Not specified in retrieved policy sections".
+3. Highlight exact numbers, dollar caps ($), day durations, age cutoffs, and required card charging percentages.
+4. Structure your response using these EXACT headings:
+
+### Executive Summary
+[Direct, clear summary highlighting the most critical differences and the overall standout card for this benefit]
+
+### Side-by-Side Comparison Matrix
+| Coverage Rider / Benefit | [Card 1 Name] | [Card 2 Name] | [Card 3 Name if applicable] | Advantage / Winner |
+| :--- | :--- | :--- | :--- | :--- |
+| ... | ... | ... | ... | ... |
+
+### Critical Exclusions & Qualifying Conditions
+- **[Card 1 Name]**: [Stability requirements, charging %, age limits, deductibles]
+- **[Card 2 Name]**: [...]
+
+### Verified Policy Citations
+- **[Card 1 Name]**: [Section Title, Page X]
+- **[Card 2 Name]**: [...]
+"""
+
 
 @dataclass
 class GroundedResponse:
@@ -170,3 +198,93 @@ class LLMGenerator:
             answer_markdown=answer_text,
             citations=citations
         )
+
+    def _build_multicard_context_prompt(self, question: str, multi_context: MultiCardContext) -> str:
+        sections = []
+        for cid, ctx in multi_context.card_contexts.items():
+            name = multi_context.card_names.get(cid, cid)
+            card_block = [f"=== CARD: {name} (ID: {cid}) ==="]
+            for i, p in enumerate(ctx.parents):
+                page_str = f"Page {p.page_start}" if p.page_start == p.page_end else f"Pages {p.page_start}-{p.page_end}"
+                card_block.append(f"--- Parent Section {i+1}: [{p.policy_name}] > {p.section_title} ({page_str}) ---\n{p.content}\n")
+            sections.append("\n".join(card_block))
+
+        all_context = "\n\n".join(sections)
+        return f"CONTEXT INFORMATION PER CARD:\n{all_context}\n\nCOMPARATIVE QUESTION:\n{question}\n\nSynthesize the comparison according to the rules and structure:"
+
+    def _format_fallback_comparison(self, question: str, multi_context: MultiCardContext) -> str:
+        card_names = list(multi_context.card_names.values())
+        headers = ["Coverage Rider / Benefit"] + card_names + ["Advantage / Winner"]
+        table_header = "| " + " | ".join(headers) + " |"
+        table_separator = "| " + " | ".join([":---"] * len(headers)) + " |"
+
+        rows = []
+        rider_title = question.replace("Compare", "").replace("coverage", "").replace("limits", "").strip().title() or "Coverage Comparison"
+        row_cols = [rider_title]
+        for cid in multi_context.card_contexts.keys():
+            ctx = multi_context.card_contexts[cid]
+            if ctx.parents:
+                p = ctx.parents[0]
+                snippet = p.content[:120].replace("\n", " ").strip() + "..."
+                row_cols.append(snippet)
+            else:
+                row_cols.append("Not specified in retrieved policy sections")
+        row_cols.append("Refer to comparison matrix columns")
+        rows.append("| " + " | ".join(row_cols) + " |")
+
+        matrix_table = f"{table_header}\n{table_separator}\n" + "\n".join(rows)
+
+        exclusion_lines = []
+        citation_lines = []
+        for cid, ctx in multi_context.card_contexts.items():
+            name = multi_context.card_names.get(cid, cid)
+            card_citations = []
+            for p in ctx.parents:
+                page_str = f"Page {p.page_start}" if p.page_start == p.page_end else f"Pages {p.page_start}-{p.page_end}"
+                card_citations.append(f"[{p.section_title}, {page_str}]")
+            citation_lines.append(f"- **{name}**: {', '.join(card_citations) if card_citations else 'No citations'}")
+            exclusion_lines.append(f"- **{name}**: Refer to policy terms and conditions cited below.")
+
+        return (
+            f"### Executive Summary\nComparison synthesized from verified policy sections for '{question}'.\n\n"
+            f"### Side-by-Side Comparison Matrix\n{matrix_table}\n\n"
+            f"### Critical Exclusions & Qualifying Conditions\n" + "\n".join(exclusion_lines) + "\n\n"
+            f"### Verified Policy Citations\n" + "\n".join(citation_lines)
+        )
+
+    def generate_comparison_stream(self, question: str, multi_context: MultiCardContext) -> Generator[str, None, None]:
+        user_prompt = self._build_multicard_context_prompt(question, multi_context)
+
+        if self.ollama_client:
+            res = self.ollama_client.chat(model=self.model, messages=[
+                {"role": "system", "content": COMPARISON_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ], stream=True)
+            for part in res:
+                if isinstance(part, dict) and "message" in part and "content" in part["message"]:
+                    yield part["message"]["content"]
+            return
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": COMPARISON_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": True
+        }
+
+        client_timeout = httpx.Timeout(120.0, connect=5.0)
+        try:
+            with httpx.stream("POST", f"{self.base_url}/api/chat", json=payload, timeout=client_timeout) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    content = data.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+        except Exception:
+            yield self._format_fallback_comparison(question, multi_context)
+

@@ -37,3 +37,54 @@ def test_retriever_multicard_parallel_fanout():
         assert len(ctx.parents) == 1
         assert ctx.parents[0].card_id == cid
         assert cid in result.card_names
+
+from src.generator import LLMGenerator, COMPARISON_SYSTEM_PROMPT
+
+def test_generator_comparison_prompt_assembly():
+    generator = LLMGenerator()
+    multi_ctx = MultiCardContext(
+        card_contexts={
+            "card_a": RetrievedContext(
+                parents=[ParentSection("p1", "card_a", "Bank A Card", "Rental Car", "Limits", 10, 10, "MSRP up to $85,000 for 48 days.")],
+                citations=[]
+            ),
+            "card_b": RetrievedContext(
+                parents=[ParentSection("p2", "card_b", "Bank B Card", "Rental Car", "Limits", 20, 20, "MSRP up to $100,000 for 48 days.")],
+                citations=[]
+            )
+        },
+        card_names={"card_a": "Bank A Card", "card_b": "Bank B Card"}
+    )
+
+    prompt = generator._build_multicard_context_prompt("Compare rental car limits", multi_ctx)
+    assert "=== CARD: Bank A Card (ID: card_a) ===" in prompt
+    assert "=== CARD: Bank B Card (ID: card_b) ===" in prompt
+    assert "MSRP up to $85,000" in prompt
+    assert "MSRP up to $100,000" in prompt
+    assert "COMPARATIVE QUESTION:\nCompare rental car limits" in prompt
+
+def test_generator_comparison_fallback_markdown():
+    generator = LLMGenerator()
+    multi_ctx = MultiCardContext(
+        card_contexts={
+            "td_aeroplan_vip": RetrievedContext(
+                parents=[ParentSection("p1", "td_aeroplan_vip", "TD Aeroplan VIP", "Rental Car", "Limits", 38, 38, "Maximum MSRP $85,000.")],
+                citations=[]
+            ),
+            "cibc_aeroplan_vip": RetrievedContext(
+                parents=[ParentSection("p2", "cibc_aeroplan_vip", "CIBC Aeroplan VIP", "Rental Car", "Limits", 24, 24, "Maximum MSRP $100,000.")],
+                citations=[]
+            )
+        },
+        card_names={"td_aeroplan_vip": "TD Aeroplan VIP", "cibc_aeroplan_vip": "CIBC Aeroplan VIP"}
+    )
+
+    fallback = generator._format_fallback_comparison("Compare rental car limits", multi_ctx)
+    assert "### Executive Summary" in fallback
+    assert "### Side-by-Side Comparison Matrix" in fallback
+    assert "| Coverage Rider / Benefit |" in fallback
+    assert "TD Aeroplan VIP" in fallback
+    assert "CIBC Aeroplan VIP" in fallback
+    assert "### Critical Exclusions & Qualifying Conditions" in fallback
+    assert "### Verified Policy Citations" in fallback
+
