@@ -7,6 +7,8 @@ from qdrant_client import models
 from src.parser import DocumentChunk, ParentSection
 from src.storage import StorageManager, QdrantStorageManager
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 @dataclass
 class ScoredChunk:
     chunk: DocumentChunk
@@ -17,6 +19,12 @@ class ScoredChunk:
 class RetrievedContext:
     parents: List[ParentSection]
     citations: List[Dict[str, Any]]
+
+@dataclass
+class MultiCardContext:
+    card_contexts: Dict[str, RetrievedContext]  # card_id -> RetrievedContext
+    card_names: Dict[str, str]                 # card_id -> display card name
+
 
 class HybridParentRetriever:
     """Performs card-scoped hybrid retrieval combining BM25 sparse vectors and dense embeddings via Qdrant Cloud RRF,
@@ -97,6 +105,37 @@ class HybridParentRetriever:
                 ))
 
         return RetrievedContext(parents=parents, citations=citations)
+
+    def retrieve_multicard(
+        self,
+        card_ids: List[str],
+        query: str,
+        top_k_parents_per_card: int = 2,
+        top_k_children_per_card: int = 6
+    ) -> MultiCardContext:
+        """Executes parallel hybrid search across multiple cards in Qdrant Cloud."""
+        card_contexts: Dict[str, RetrievedContext] = {}
+        card_names: Dict[str, str] = {}
+
+        def _fetch_card(cid: str):
+            ctx = self.retrieve(
+                card_id=cid,
+                query=query,
+                top_k_parents=top_k_parents_per_card,
+                top_k_children=top_k_children_per_card
+            )
+            c_name = ctx.parents[0].card_name if ctx.parents and ctx.parents[0].card_name else cid
+            return cid, c_name, ctx
+
+        with ThreadPoolExecutor(max_workers=min(len(card_ids), 3)) as executor:
+            futures = [executor.submit(_fetch_card, cid) for cid in card_ids]
+            for f in as_completed(futures):
+                cid, c_name, ctx = f.result()
+                card_contexts[cid] = ctx
+                card_names[cid] = c_name
+
+        return MultiCardContext(card_contexts=card_contexts, card_names=card_names)
+
 
 
 class HybridRetriever:
