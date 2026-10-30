@@ -1,8 +1,8 @@
 # Credit Card Insurance RAG: Phased Roadmap & Live Status
 
-**Last Updated:** 2026-10-28  
+**Last Updated:** 2026-10-30  
 **Architecture:** Bank-Agnostic Two-Tier Parent-Document Retrieval with Qdrant Cloud Native Hybrid Search  
-**Active Test Suite:** 37/37 Automated Tests Passing (100% Pass Rate)  
+**Active Test Suite:** 48/48 Automated Tests Passing (100% Pass Rate)  
 **Target Baseline Cards:** TD Aeroplan VIP (52 pages), CIBC Aeroplan VIP, Scotiabank Passport VIP  
 **Input Data Directory:** `data/` (Strictly dedicated to raw input PDFs: `cibc/`, `scotia/`, `td/`)  
 **Standardized Markdown:** `data/extracted/` (Standardized continuous Markdown per card)  
@@ -18,8 +18,8 @@
 | **Phase 2** | **Hybrid Retrieval & Benchmark Baseline** | `src/storage.py` (Local fallback), `src/retriever.py`, local RRF fusion ($k=60$)<br>*(BM25Plus, sentence-transformers/all-MiniLM-L6-v2)* | **COMPLETE (100%)** ✅ | 10/10 TD benchmark tests passing (`tests/test_benchmark_td.py`). Stopword pruning and exact number matching. | [Phase 2 Guide](phases/PHASE_2_RETRIEVAL.md) |
 | **Phase 3** | **Grounded Synthesis & Citation Guardrails** | `src/generator.py`, `scripts/query.py`, `scripts/eval_synthesis.py`<br>*(qwen2.5:7b via local Ollama, 4-part response schema)* | **COMPLETE (100%)** ✅ | 4/4 generator tests passing (`tests/test_generator.py`). 5/5 synthesis evaluation cases pass with 100% negative rejection. | [Phase 3 Guide](phases/PHASE_3_SYNTHESIS.md) |
 | **Phase 4** | **Full-Stack Web App & Multi-Bank Verification** | `api/main.py`, `frontend/` (Dark Fintech UI), `tests/test_multibank.py`<br>*(FastAPI, Uvicorn, SSE streaming, Vanilla HTML5/CSS3/ES6)* | **COMPLETE (100%)** ✅ | 4/4 API tests + 3/3 multi-bank tests passing (`tests/test_api.py`, `tests/test_multibank.py`). Zero build step. | [Phase 4 Guide](phases/PHASE_4_FULLSTACK_UI.md) |
-| **Phase 5** | **Parent-Document Retrieval & Qdrant Cloud Hybrid** | `src/bm25_vectorizer.py`, `src/storage.py` (`QdrantStorageManager`), `src/retriever.py` (`HybridParentRetriever`), `scripts/index_all_cards.py`<br>*(Qdrant Cloud, BAAI/bge-base-en-v1.5 768-d on GPU, server-side RRF)* | **COMPLETE (100%)** ✅ | **37/37 tests passing** in full test suite. CIBC (`$100,000` MSRP, medical duration) & TD benchmarks verified with 100% precision. | [Phase 5 Guide](phases/PHASE_5_PARENT_DOCUMENT_QDRANT.md) |
-| **Phase 6** | **Multi-Card Policy Comparison Engine** | Multi-card comparative synthesis prompt, side-by-side policy matrix UI, `/api/compare` endpoint | **PLANNED** 📋 | Comparative benchmark across TD vs CIBC vs Scotiabank coverage limits. | — |
+| **Phase 5** | **Parent-Document Retrieval & Qdrant Cloud Hybrid** | `src/bm25_vectorizer.py`, `src/storage.py` (`QdrantStorageManager`), `src/retriever.py` (`HybridParentRetriever`), `scripts/index_all_cards.py`<br>*(Qdrant Cloud, BAAI/bge-base-en-v1.5 768-d on GPU, server-side RRF)* | **COMPLETE (100%)** ✅ | 37/37 tests passing in suite. CIBC (`$100,000` MSRP, medical duration) & TD benchmarks verified with 100% precision. | [Phase 5 Guide](phases/PHASE_5_PARENT_DOCUMENT_QDRANT.md) |
+| **Phase 6** | **Multi-Card Policy Comparison Engine** | `src/retriever.py` (`retrieve_multicard`), `src/generator.py` (`COMPARISON_SYSTEM_PROMPT`), `api/main.py` (`/api/compare` SSE), `frontend/` (Matrix UI, mode switcher), `scripts/compare_cards.py`<br>*(Parallel hybrid fan-out, cross-bank alias resolution, side-by-side matrix)* | **COMPLETE (100%)** ✅ | **48/48 tests passing** in full test suite (11/11 comparison tests in `tests/test_comparison.py`). Comprehensive 5-rider cross-bank benchmark across TD, CIBC, and Scotia verified. | [Phase 6 Guide](phases/PHASE_6_COMPARISON.md) |
 | **Phase 7** | **Autonomous Claim Eligibility Auditor** | Incident intake questionnaire, multi-clause exclusion auditor, payout estimation engine | **BACKLOG** ⏳ | Ground-truth claim scenario evaluations (medical, baggage, trip cancellation). | — |
 
 > **Architectural Changes & History**: See [Design Change Records](design_changes/README.md) (e.g. [DCR-001: Phase 1 Parser Refactor](design_changes/001_phase1_parser_hierarchical_tracking.md), [DCR-002: Markdown Document Export](design_changes/002_markdown_export_on_ingestion.md), [DCR-003: Parent-Document Qdrant Cloud Migration](design_changes/003_parent_document_qdrant_cloud.md)).
@@ -81,17 +81,21 @@
 
 ---
 
-## 3. Upcoming Phases & Architectural Roadmap
-
-### Phase 6: Multi-Card Policy Comparison Engine (Planned 📋)
-* **Objective:** Enable users to select 2 or 3 credit cards simultaneously (e.g. *TD Aeroplan VIP* vs *CIBC Aeroplan VIP*) and compare specific coverage riders (e.g. rental car collision limits, emergency travel medical duration, mobile device deductibles) side by side.
-* **Deliverables:**
-  - Multi-card parallel hybrid retrieval pipeline in `src/retriever.py`.
-  - Structured comparative prompt template in `src/generator.py` outputting a Markdown comparison matrix.
-  - New API endpoint `POST /api/compare` accepting `card_ids: List[str]` and `query: str`.
-  - Frontend comparison modal rendering synchronized side-by-side table columns.
+### Phase 6: Multi-Card Policy Comparison Engine
+* **Goal:** Enable cardholders to select 2–3 cards simultaneously (TD Aeroplan VIP vs CIBC Aeroplan VIP vs Scotiabank Passport VIP), retrieve matching policy clauses in parallel across issuers, and synthesize side-by-side comparison matrix tables with zero cross-document hallucination.
+* **Status:** **COMPLETE (100%) ✅**
+  - **Parallel Fan-out Hybrid Retriever**: `src/retriever.py` implements `retrieve_multicard()` fan-out via `ThreadPoolExecutor` and server-side Qdrant RRF fusion, resolving `MultiCardContext`.
+  - **Cross-Bank Alias Resolution**: `CARD_ID_ALIASES` in `src/retriever.py` dynamically normalizes short UI keys (`td_aeroplan_vip`, `cibc_aeroplan_vip`, `scotia_passport_vip`) to raw collection IDs via Qdrant's `MatchAny` filters.
+  - **Comparative Synthesis Prompting**: `src/generator.py` implements `COMPARISON_SYSTEM_PROMPT` enforcing a 4-tier output schema: (1) Executive Summary, (2) Side-by-Side Comparison Matrix Table, (3) Critical Exclusions & Qualifying Conditions, (4) Verified Policy Citations, with strict zero-hallucination rules ("Not specified in retrieved policy sections").
+  - **Streaming Comparison Endpoint**: `api/main.py` provides `POST /api/compare` with Server-Sent Events (`cards_context`, `token`, `citations`, `done`) and 2–3 card validation.
+  - **Dual-Mode Dark Fintech Web UI**: `frontend/` updated with header mode switcher (Single Card Chat vs Multi-Card Comparison), multi-card pill selector with 2–3 count limiter, dynamic comparison quick chips, interactive markdown matrix table parser, and bank-segmented citation accordions. Zero build step.
+  - **Terminal Utility**: `scripts/compare_cards.py` enables standalone terminal comparisons with live stdout token streaming and citation verification.
+  - **5-Rider Cross-Bank Benchmark Suite**: `tests/test_comparison.py` codifies automated ground-truth benchmarks across TD, CIBC, and Scotia covering Rental Car Collision Waiver ($85k / $100k / $85k), Senior Medical Coverage (4d / 10d / 3d), Trip Cancellation ($2.5k / traveler), Baggage Delay (4h / $1k), and Mobile Devices ($1.5k / $1.5k / $1.0k).
+  - **Full Automated Test Suite**: **48/48 tests passing** in `pytest tests/ -v`.
 
 ---
+
+## 3. Upcoming Phases & Architectural Roadmap
 
 ### Phase 7: Autonomous Claim Eligibility Auditor (Backlog ⏳)
 * **Objective:** An interactive audit assistant where cardholders input an incident scenario (e.g. *"Flight was delayed 5 hours due to mechanical issues, baggage delayed 14 hours, paid with card"*), and the system audits the exact Certificate of Insurance to output:

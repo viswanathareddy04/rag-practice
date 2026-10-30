@@ -1,6 +1,6 @@
 # Credit Card Insurance RAG — Bank-Agnostic Parent-Document Architecture
 
-[![Test Suite](https://img.shields.io/badge/pytest-37%2F37%20passing-brightgreen.svg)](#6-testing--verification)
+[![Test Suite](https://img.shields.io/badge/pytest-48%2F48%20passing-brightgreen.svg)](#6-testing--verification)
 [![Python](https://img.shields.io/badge/python-3.12%2B%20%7C%203.13-blue.svg)](https://www.python.org/)
 [![Vector DB](https://img.shields.io/badge/Qdrant%20Cloud-Hybrid%20Dense%20%2B%20Sparse-red.svg)](https://qdrant.tech/)
 [![Embeddings](https://img.shields.io/badge/Embeddings-BAAI%2Fbge--base--en--v1.5%20(768--d)-purple.svg)](https://huggingface.co/BAAI/bge-base-en-v1.5)
@@ -14,7 +14,7 @@ A production-grade, bank-agnostic **Retrieval-Augmented Generation (RAG)** syste
 
 Traditional dense-only RAG pipelines fail catastrophically on legal insurance contracts because semantic embeddings obscure exact numerical limits (e.g. `$100,000` vs `$85,000` MSRP), flat chunking severs exclusion clauses from benefit schedules, and standard LLM prompts hallucinate coverage.
 
-This system solves these domain challenges with a **5-Pillar Architecture**:
+This system solves these domain challenges with a **6-Pillar Architecture**:
 
 1. **Two-Tier Parent-Document Architecture (Small-to-Big)**:
    * **Child Chunks** (~80–150 words): Act as high-precision semantic & lexical "search beacons" tagged with exact page numbers.
@@ -35,6 +35,10 @@ This system solves these domain challenges with a **5-Pillar Architecture**:
    * FastAPI backend serving Server-Sent Events (SSE) token streaming.
    * Pure Vanilla HTML5/CSS3/ES6 JavaScript frontend with zero framework dependencies.
    * Collapsible source citation drawer featuring exact page badges and expandable full-section views.
+6. **Multi-Card Policy Comparison Engine**:
+   * Select 2–3 cards simultaneously (TD vs CIBC vs Scotia) with parallel fan-out hybrid retrieval.
+   * Cross-bank alias resolution normalizing short identifiers to cloud points.
+   * Comparative synthesis outputting side-by-side comparison matrix tables, key winner badges, and segmented citations.
 
 ---
 
@@ -88,7 +92,8 @@ flowchart TD
 | **Phase 2** | **Hybrid Retrieval & Benchmark Baseline** | `src/storage.py` (Local fallback), `src/retriever.py`, local RRF fusion ($k=60$)<br>*(BM25Plus, sentence-transformers/all-MiniLM-L6-v2)* | **COMPLETE (100%)** ✅ | 10/10 TD benchmark tests passing (`tests/test_benchmark_td.py`). Stopword pruning and exact number matching. | [Phase 2 Guide](docs/phases/PHASE_2_RETRIEVAL.md) |
 | **Phase 3** | **Grounded Synthesis & Citation Guardrails** | `src/generator.py`, `scripts/query.py`, `scripts/eval_synthesis.py`<br>*(qwen2.5:7b via local Ollama, 4-part response schema)* | **COMPLETE (100%)** ✅ | 4/4 generator tests passing. 5/5 synthesis evaluation cases pass with 100% negative rejection. | [Phase 3 Guide](docs/phases/PHASE_3_SYNTHESIS.md) |
 | **Phase 4** | **Full-Stack Web App & Multi-Bank Verification** | `api/main.py`, `frontend/` (Dark Fintech UI), `tests/test_multibank.py`<br>*(FastAPI, Uvicorn, SSE streaming, Vanilla HTML5/CSS3/ES6)* | **COMPLETE (100%)** ✅ | 4/4 API tests + 3/3 multi-bank tests passing (`tests/test_api.py`, `tests/test_multibank.py`). Zero build step. | [Phase 4 Guide](docs/phases/PHASE_4_FULLSTACK_UI.md) |
-| **Phase 5** | **Parent-Document Retrieval & Qdrant Cloud Hybrid** | `src/bm25_vectorizer.py`, `src/storage.py` (`QdrantStorageManager`), `src/retriever.py` (`HybridParentRetriever`), `scripts/index_all_cards.py`<br>*(Qdrant Cloud, BAAI/bge-base-en-v1.5 768-d on GPU, server-side RRF)* | **COMPLETE (100%)** ✅ | **37/37 tests passing** in full test suite. CIBC (`$100,000` MSRP, medical duration) & TD benchmarks verified. | [Phase 5 Guide](docs/phases/PHASE_5_PARENT_DOCUMENT_QDRANT.md) |
+| **Phase 5** | **Parent-Document Retrieval & Qdrant Cloud Hybrid** | `src/bm25_vectorizer.py`, `src/storage.py` (`QdrantStorageManager`), `src/retriever.py` (`HybridParentRetriever`), `scripts/index_all_cards.py`<br>*(Qdrant Cloud, BAAI/bge-base-en-v1.5 768-d on GPU, server-side RRF)* | **COMPLETE (100%)** ✅ | 37/37 tests passing in suite. CIBC (`$100,000` MSRP, medical duration) & TD benchmarks verified. | [Phase 5 Guide](docs/phases/PHASE_5_PARENT_DOCUMENT_QDRANT.md) |
+| **Phase 6** | **Multi-Card Policy Comparison Engine** | `src/retriever.py` (`retrieve_multicard`), `src/generator.py` (`COMPARISON_SYSTEM_PROMPT`), `api/main.py` (`/api/compare` SSE), `frontend/` (Matrix UI, mode switcher), `scripts/compare_cards.py`<br>*(Parallel hybrid fan-out, cross-bank alias resolution, side-by-side matrix)* | **COMPLETE (100%)** ✅ | **48/48 tests passing** in full test suite (11/11 comparison tests in `tests/test_comparison.py`). Comprehensive 5-rider cross-bank benchmark across TD, CIBC, and Scotia verified. | [Phase 6 Guide](docs/phases/PHASE_6_COMPARISON.md) |
 
 ---
 
@@ -139,8 +144,14 @@ Test questions directly in the terminal with live streaming:
 python scripts/query.py --card td_aeroplan_vip "What is the maximum MSRP for rental car collision coverage?"
 ```
 
-### 4.6 Run the Automated Test Suite
-Run all 37 unit, integration, and benchmark tests:
+### 4.6 Compare Cards Side-by-Side via CLI
+Compare 2–3 cards side by side in the terminal with live streaming:
+```powershell
+python scripts/compare_cards.py --cards td_aeroplan_vip cibc_aeroplan_vip scotia_passport_vip --query "Compare rental car collision limits and duration"
+```
+
+### 4.7 Run the Automated Test Suite
+Run all 48 unit, integration, and cross-bank benchmark tests:
 ```powershell
 pytest tests/ -v
 ```
@@ -152,7 +163,7 @@ pytest tests/ -v
 ```text
 rag-practice/
 ├── api/
-│   └── main.py                     # FastAPI backend (SSE streaming, REST endpoints, static mounting)
+│   └── main.py                     # FastAPI backend (SSE streaming /api/query & /api/compare, REST, static mounting)
 ├── data/                           # Raw digital PDF insurance certificates (strictly input documents)
 │   ├── cibc/                       # CIBC insurance booklets
 │   ├── scotia/                     # Scotiabank insurance certificates
@@ -162,16 +173,17 @@ rag-practice/
 │   ├── ARCHITECTURE_AND_TECHNICAL_REFERENCE.md  # Deep-dive engineering reference & beginner guide
 │   ├── ROADMAP.md                  # Development phase roadmap and status
 │   ├── design_changes/             # Formal Design Change Records (DCR-001, DCR-002, DCR-003)
-│   └── phases/                     # Architectural guides for Phases 1 through 5
+│   └── phases/                     # Architectural guides for Phases 1 through 6
 ├── frontend/                       # Dark Fintech UI (Zero-build HTML5/CSS3/ES6 JS)
-│   ├── app.js                      # SSE stream consumer, markdown renderer, citation drawer
+│   ├── app.js                      # Dual-mode switcher, SSE consumer, matrix renderer, citation drawer
 │   ├── index.html                  # Semantic application markup
-│   └── style.css                   # Custom fintech design tokens and responsive styles
+│   └── style.css                   # Custom fintech design tokens, matrix tables, and responsive styles
 ├── scripts/                        # Operational CLI tools & benchmarks
+│   ├── compare_cards.py            # Standalone terminal multi-card comparison client
 │   ├── eval_synthesis.py           # Automated evaluation of LLM grounding and negative controls
 │   ├── index_all_cards.py          # Master CLI ingestion tool for Qdrant Cloud
 │   ├── inspect_policies.py         # Diagnostic outline and policy transition inspector
-│   └── query.py                    # Terminal streaming Q&A client
+│   └── query.py                    # Terminal streaming single-card Q&A client
 ├── src/                            # Core pipeline implementation
 │   ├── bm25_vectorizer.py          # Cloud-native BM25 sparse vectorizer & tokenizer
 │   ├── generator.py                # Grounded LLM generator (qwen2.5:7b) with SSE streaming
