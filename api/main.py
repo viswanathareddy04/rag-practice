@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Generator
+from typing import Generator, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -15,7 +15,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.registry import CardRegistry
-from src.parser import InsuranceDocParser
+from src.parser import InsuranceDocParser, ParentSection
 from src.storage import StorageManager, QdrantStorageManager
 from src.retriever import HybridRetriever, HybridParentRetriever, RetrievedContext
 from src.generator import LLMGenerator
@@ -199,6 +199,105 @@ def stream_query(req: QueryRequest):
 
     return StreamingResponse(
         sse_event_generator(card_id, req.query),
+        media_type="text/event-stream"
+    )
+
+class CompareRequest(BaseModel):
+    card_ids: List[str]
+    query: str
+
+def sse_compare_event_generator(card_ids: List[str], query: str) -> Generator[str, None, None]:
+    start_total = time.time()
+
+    # Multi-card retrieval
+    multi_ctx = qdrant_retriever.retrieve_multicard(
+        card_ids=card_ids,
+        query=query,
+        top_k_parents_per_card=2,
+        top_k_children_per_card=6
+    )
+
+    # Fallback to legacy index for any card that yielded empty parents
+    for cid in card_ids:
+        ctx = multi_ctx.card_contexts.get(cid)
+        if (not ctx or not ctx.parents) and (legacy_storage.is_indexed(cid) or (cid in REVERSE_ALIASES and legacy_storage.is_indexed(REVERSE_ALIASES[cid]))):
+            target_id = cid if legacy_storage.is_indexed(cid) else REVERSE_ALIASES[cid]
+            legacy_chunks = legacy_retriever.retrieve(card_id=target_id, query=query, top_k=6)
+            if legacy_chunks:
+                parents = [
+                    ParentSection(
+                        parent_id=f"{cid}_legacy_{i}",
+                        card_id=cid,
+                        card_name=multi_ctx.card_names.get(cid, cid),
+                        policy_name=sc.chunk.breadcrumb.split(" > ")[1] if " > " in sc.chunk.breadcrumb else "General Coverage",
+                        section_title=sc.chunk.breadcrumb.split(" > ")[-1] if " > " in sc.chunk.breadcrumb else "Benefits",
+                        page_start=sc.chunk.page_number,
+                        page_end=sc.chunk.page_number,
+                        content=sc.chunk.content
+                    )
+                    for i, sc in enumerate(legacy_chunks[:2])
+                ]
+                citations = [
+                    {
+                        "child_id": f"{cid}_c_{i}",
+                        "page_number": sc.chunk.page_number,
+                        "breadcrumb": sc.chunk.breadcrumb,
+                        "content": sc.chunk.content,
+                        "score": round(sc.score, 4)
+                    }
+                    for i, sc in enumerate(legacy_chunks)
+                ]
+                multi_ctx.card_contexts[cid] = RetrievedContext(parents=parents, citations=citations)
+
+    # 1. Emit cards_context event
+
+    context_payload = {
+        cid: [
+            {
+                "rank": i + 1,
+                "page_number": c.get("page_number", 1),
+                "breadcrumb": c.get("breadcrumb", ""),
+                "snippet": c.get("content", "")[:200] + "..." if len(c.get("content", "")) > 200 else c.get("content", ""),
+                "full_content": c.get("content", ""),
+                "score": round(c.get("score", 0.0), 4)
+            }
+            for i, c in enumerate(ctx.citations)
+        ]
+        for cid, ctx in multi_ctx.card_contexts.items()
+    }
+    yield f"event: cards_context\ndata: {json.dumps(context_payload)}\n\n"
+
+    # 2. Stream tokens
+    token_stream = generator.generate_comparison_stream(query, multi_ctx)
+    for token in token_stream:
+        yield f"event: token\ndata: {json.dumps(token)}\n\n"
+
+    # 3. Emit grouped citations
+    citations_payload = {
+        cid: ctx.citations
+        for cid, ctx in multi_ctx.card_contexts.items()
+    }
+    yield f"event: citations\ndata: {json.dumps(citations_payload)}\n\n"
+
+    elapsed = round((time.time() - start_total) * 1000, 1)
+    yield f"event: done\ndata: {json.dumps({'elapsed_ms': elapsed})}\n\n"
+
+@app.post("/api/compare")
+def stream_compare(req: CompareRequest):
+    if len(req.card_ids) < 2 or len(req.card_ids) > 3:
+        raise HTTPException(status_code=400, detail="Comparison requires between 2 and 3 cards.")
+
+    resolved_ids = []
+    for cid in req.card_ids:
+        eff_id = CARD_ALIASES.get(cid, cid)
+        if not (qdrant_storage.is_indexed(eff_id) or legacy_storage.is_indexed(eff_id)):
+            index_card(eff_id)
+            if not (qdrant_storage.is_indexed(eff_id) or legacy_storage.is_indexed(eff_id)):
+                eff_id = CARD_ALIASES.get(eff_id, eff_id)
+        resolved_ids.append(eff_id)
+
+    return StreamingResponse(
+        sse_compare_event_generator(resolved_ids, req.query),
         media_type="text/event-stream"
     )
 

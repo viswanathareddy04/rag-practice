@@ -88,3 +88,39 @@ def test_generator_comparison_fallback_markdown():
     assert "### Critical Exclusions & Qualifying Conditions" in fallback
     assert "### Verified Policy Citations" in fallback
 
+from fastapi.testclient import TestClient
+from api.main import app
+
+api_client = TestClient(app)
+
+def test_api_compare_validation_requires_2_or_3_cards():
+    # Only 1 card
+    res1 = api_client.post("/api/compare", json={"card_ids": ["td_aeroplan_vip"], "query": "Compare limits"})
+    assert res1.status_code == 400
+    assert "between 2 and 3 cards" in res1.json()["detail"]
+
+    # 4 cards
+    res2 = api_client.post("/api/compare", json={
+        "card_ids": ["card_1", "card_2", "card_3", "card_4"],
+        "query": "Compare limits"
+    })
+    assert res2.status_code == 400
+
+def test_api_compare_streaming_events():
+    payload = {
+        "card_ids": ["td_aeroplan_vip", "cibc_aeroplan_vip"],
+        "query": "Compare rental car collision limits"
+    }
+    with api_client.stream("POST", "/api/compare", json=payload) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        events = []
+        for line in response.iter_lines():
+            if line:
+                events.append(line)
+        assert any("event: cards_context" in e for e in events)
+        assert any("event: token" in e for e in events)
+        assert any("event: citations" in e for e in events)
+        assert any("event: done" in e for e in events)
+
+
